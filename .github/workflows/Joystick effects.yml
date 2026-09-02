@@ -20,9 +20,9 @@ jobs:
             libeigen3-dev libboost-all-dev rapidjson-dev \
             libvlc-dev libvlccore-dev vlc-bin python3
 
-      - name: Clone EmulationStation-fcamod Source
+      - name: Clone EmulationStation-fcamod Source (Recursive)
         run: |
-          git clone --depth 1 https://github.com/lcdyk0517/EmulationStation-fcamod.git es-source
+          git clone --depth 1 --recursive https://github.com/lcdyk0517/EmulationStation-fcamod.git es-source
 
       - name: Inject Native C++ Thread & UI Options
         run: |
