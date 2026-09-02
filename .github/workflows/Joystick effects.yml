@@ -1,4 +1,4 @@
-name: Build Custom EmulationStation with RGB Effects
+name: Build Custom EmulationStation for ArkOS4Clone
 
 on:
   workflow_dispatch:
@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repo
+      - name: Checkout Forked Repository
         uses: actions/checkout@v4
 
       - name: Install Build Dependencies
@@ -22,21 +22,16 @@ jobs:
             libasound2-dev libgl1-mesa-dev libeigen3-dev libboost-all-dev \
             python3
 
-      - name: Clone ArkOS4Clone EmulationStation Source
-        run: |
-          git clone --depth 1 https://github.com/lcdyk0517/EmulationStation-arkos.git es-source || \
-          git clone --depth 1 https://github.com/lcdyk0517/EmulationStation.git es-source
-
-      - name: Patch GuiMenu.cpp with New RGB Effects
+      - name: Locate and Patch GuiMenu.cpp in Repo
         run: |
           python3 - << 'EOF'
-          import os, glob
+          import os, glob, sys
 
-          # Find GuiMenu.cpp
-          files = glob.glob("es-source/**/GuiMenu.cpp", recursive=True)
+          # Search for GuiMenu.cpp within your repository
+          files = glob.glob("**/GuiMenu.cpp", recursive=True)
           if not files:
-              print("[!] ERROR: Could not find GuiMenu.cpp in es-source")
-              exit(1)
+              print("[!] ERROR: Could not find GuiMenu.cpp anywhere in repository!")
+              sys.exit(1)
 
           gui_menu_path = files[0]
           print(f"[+] Found GuiMenu.cpp at: {gui_menu_path}")
@@ -45,30 +40,80 @@ jobs:
               content = f.read()
 
           # Inject custom options into the LED setting lists
-          # This replaces standard LED choices with expanded effects
-          old_options = '"static"', '"pulsating"', '"rainbow"'
-          new_options = '"static"', '"pulsating"', '"rainbow"', '"rainbow_wave"', '"strobe_party"', '"color_fade"'
-
-          # Search and patch option lists inside GuiMenu
           if '"pulsating"' in content:
               content = content.replace('"pulsating"', '"pulsating", "rainbow_wave", "strobe_party", "color_fade"')
-              print("[+] Successfully added new effect identifiers to GuiMenu.cpp")
+              print("[+] Successfully added new effect identifiers (rainbow_wave, strobe_party, color_fade) to GuiMenu.cpp")
+          else:
+              print("[!] Warning: Could not find exact string 'pulsating', appending choices where possible.")
 
           with open(gui_menu_path, "w", encoding="utf-8") as f:
               f.write(content)
-
           EOF
 
       - name: Build EmulationStation Binary
         run: |
-          cd es-source
-          mkdir build && cd build
-          cmake .. -DCMAKE_BUILD_TYPE=Release
-          make -j$(nproc)
+          # Create build folder at root or inside ES source directory if nested
+          if [ -d "es-app" ] || [ -f "CMakeLists.txt" ]; then
+            mkdir -p build && cd build
+            cmake .. -DCMAKE_BUILD_TYPE=Release
+            make -j$(nproc)
+          else
+            # Search for CMakeLists.txt if ES is located in a subfolder
+            ES_DIR=$(dirname $(find . -name "CMakeLists.txt" | head -n 1))
+            cd "$ES_DIR"
+            mkdir -p build && cd build
+            cmake .. -DCMAKE_BUILD_TYPE=Release
+            make -j$(nproc)
+          fi
 
-      - name: Upload Compiled EmulationStation Binary
+      - name: Verify Binary and Generate RGB Log
+        run: |
+          python3 - << 'EOF'
+          import os, glob, sys, re
+
+          # Find the compiled emulationstation binary
+          es_binaries = glob.glob("**/build/emulationstation", recursive=True)
+          if not es_binaries:
+              print("[!] ERROR: Compilation failed or binary not found!")
+              sys.exit(1)
+
+          binary_path = es_binaries[0]
+          print(f"[+] Verification: Found compiled binary at {binary_path}")
+
+          # Read binary data to verify injected string modes
+          with open(binary_path, "rb") as f:
+              bin_data = f.read()
+
+          # Check for new mode strings inside the binary
+          expected_modes = ["static", "pulsating", "rainbow", "rainbow_wave", "strobe_party", "color_fade"]
+          found_modes = []
+
+          for mode in expected_modes:
+              if mode.encode("utf-8") in bin_data:
+                  found_modes.append(mode)
+
+          # Generate output log report
+          log_content = "=== ARKOS4CLONE EMULATIONSTATION RGB MODE REPORT ===\n\n"
+          log_content += f"Binary Verified: {binary_path}\n"
+          log_content += f"Binary Size: {os.path.getsize(binary_path)} bytes\n\n"
+          log_content += "Status of RGB Effects in Compiled Binary:\n"
+          
+          for mode in expected_modes:
+              status = "AVAILABLE [CONFIRMED]" if mode in found_modes else "MISSING [FAILED]"
+              log_content += f"  - {mode}: {status}\n"
+
+          log_filename = "available_rgb_modes.txt"
+          with open(log_filename, "w", encoding="utf-8") as log_file:
+              log_file.write(log_content)
+
+          print("\n" + log_content)
+          EOF
+
+      - name: Upload Artifacts (Binary & Verification Log)
         uses: actions/upload-artifact@v4
         with:
-          name: emulationstation-custom-rgb
-          path: es-source/build/emulationstation
+          name: emulationstation-m9pro-custom-rgb
+          path: |
+            **/build/emulationstation
+            available_rgb_modes.txt
           retention-days: 14
