@@ -1,0 +1,74 @@
+name: Build Custom EmulationStation with RGB Effects
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-es:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake pkg-config \
+            libsdl2-dev libfreeimage-dev libfreetype6-dev libcurl4-openssl-dev \
+            libasound2-dev libgl1-mesa-dev libeigen3-dev libboost-all-dev \
+            python3
+
+      - name: Clone ArkOS4Clone EmulationStation Source
+        run: |
+          git clone --depth 1 https://github.com/lcdyk0517/EmulationStation-arkos.git es-source || \
+          git clone --depth 1 https://github.com/lcdyk0517/EmulationStation.git es-source
+
+      - name: Patch GuiMenu.cpp with New RGB Effects
+        run: |
+          python3 - << 'EOF'
+          import os, glob
+
+          # Find GuiMenu.cpp
+          files = glob.glob("es-source/**/GuiMenu.cpp", recursive=True)
+          if not files:
+              print("[!] ERROR: Could not find GuiMenu.cpp in es-source")
+              exit(1)
+
+          gui_menu_path = files[0]
+          print(f"[+] Found GuiMenu.cpp at: {gui_menu_path}")
+
+          with open(gui_menu_path, "r", encoding="utf-8", errors="ignore") as f:
+              content = f.read()
+
+          # Inject custom options into the LED setting lists
+          # This replaces standard LED choices with expanded effects
+          old_options = '"static"', '"pulsating"', '"rainbow"'
+          new_options = '"static"', '"pulsating"', '"rainbow"', '"rainbow_wave"', '"strobe_party"', '"color_fade"'
+
+          # Search and patch option lists inside GuiMenu
+          if '"pulsating"' in content:
+              content = content.replace('"pulsating"', '"pulsating", "rainbow_wave", "strobe_party", "color_fade"')
+              print("[+] Successfully added new effect identifiers to GuiMenu.cpp")
+
+          with open(gui_menu_path, "w", encoding="utf-8") as f:
+              f.write(content)
+
+          EOF
+
+      - name: Build EmulationStation Binary
+        run: |
+          cd es-source
+          mkdir build && cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release
+          make -j$(nproc)
+
+      - name: Upload Compiled EmulationStation Binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: emulationstation-custom-rgb
+          path: es-source/build/emulationstation
+          retention-days: 14
