@@ -1,4 +1,4 @@
-name: Build Custom EmulationStation for ArkOS4Clone
+name: Build ES with Native MCU LED Daemon & Verification
 
 on:
   workflow_dispatch:
@@ -11,92 +11,150 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Forked Repository
-        uses: actions/checkout@v4
-
       - name: Install Build Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential cmake pkg-config \
             libsdl2-dev libfreeimage-dev libfreetype6-dev libcurl4-openssl-dev \
-            libasound2-dev libgl1-mesa-dev libeigen3-dev libboost-all-dev \
-            python3
+            libasound2-dev libgl1-mesa-dev libeigen3-dev libboost-all-dev python3
 
-      - name: Locate and Patch GuiMenu.cpp in Repo
+      - name: Clone EmulationStation-fcamod Source
+        run: |
+          git clone --depth 1 https://github.com/lcdyk0517/EmulationStation-fcamod.git es-source
+
+      - name: Inject Native C++ Thread & UI Options
         run: |
           python3 - << 'EOF'
-          import os, glob, sys
+          import glob, sys, re
 
-          # Search for GuiMenu.cpp within your repository
-          files = glob.glob("**/GuiMenu.cpp", recursive=True)
-          if not files:
-              print("[!] ERROR: Could not find GuiMenu.cpp anywhere in repository!")
+          # 1. Update UI options list in GuiMenu.cpp
+          menu_files = glob.glob("es-source/**/GuiMenu.cpp", recursive=True)
+          if not menu_files:
+              print("[!] ERROR: GuiMenu.cpp not found!")
               sys.exit(1)
 
-          gui_menu_path = files[0]
-          print(f"[+] Found GuiMenu.cpp at: {gui_menu_path}")
+          with open(menu_files[0], "r", encoding="utf-8", errors="ignore") as f:
+              menu_content = f.read()
 
-          with open(gui_menu_path, "r", encoding="utf-8", errors="ignore") as f:
-              content = f.read()
+          if '"pulsating"' in menu_content:
+              menu_content = menu_content.replace('"pulsating"', '"pulsating", "rainbow_wave", "strobe_party", "color_fade", "battery_status"')
 
-          # Inject custom options into the LED setting lists
-          if '"pulsating"' in content:
-              content = content.replace('"pulsating"', '"pulsating", "rainbow_wave", "strobe_party", "color_fade"')
-              print("[+] Successfully added new effect identifiers (rainbow_wave, strobe_party, color_fade) to GuiMenu.cpp")
-          else:
-              print("[!] Warning: Could not find exact string 'pulsating', appending choices where possible.")
+          with open(menu_files[0], "w", encoding="utf-8") as f:
+              f.write(menu_content)
 
-          with open(gui_menu_path, "w", encoding="utf-8") as f:
-              f.write(content)
+          # 2. Inject multi-mode MCU RGB daemon into main.cpp
+          main_files = glob.glob("es-source/**/main.cpp", recursive=True)
+          if not main_files:
+              print("[!] ERROR: main.cpp not found!")
+              sys.exit(1)
+
+          with open(main_files[0], "r", encoding="utf-8", errors="ignore") as f:
+              main_content = f.read()
+
+          thread_code = """
+          #include <thread>
+          #include <chrono>
+          #include <fstream>
+          #include <cstdlib>
+          #include <cmath>
+          #include <string>
+          #include "Settings.h"
+
+          void CustomMCUThread() {
+              std::this_thread::sleep_for(std::chrono::seconds(5));
+              int hue = 0;
+              
+              while(true) {
+                  if (Settings::getInstance() != nullptr) {
+                      std::string mode = Settings::getInstance()->getString("JoystickLEDMode");
+                      
+                      if (mode == "battery_status") {
+                          std::ifstream bat("/sys/class/power_supply/battery/capacity");
+                          int cap = 100;
+                          if (bat.is_open()) { bat >> cap; bat.close(); }
+                          
+                          if (cap >= 60) system("/usr/bin/mcu_led 0 255 0 &");
+                          else if (cap >= 25) system("/usr/bin/mcu_led 255 150 0 &");
+                          else system("/usr/bin/mcu_led 255 0 0 &");
+                          
+                          std::this_thread::sleep_for(std::chrono::seconds(5));
+                      }
+                      else if (mode == "rainbow_wave") {
+                          hue = (hue + 15) % 360;
+                          double rad = hue * 3.14159 / 180.0;
+                          int r = (int)((std::sin(rad) + 1.0) * 127.5);
+                          int g = (int)((std::sin(rad + 2.094) + 1.0) * 127.5);
+                          int b = (int)((std::sin(rad + 4.188) + 1.0) * 127.5);
+                          std::string cmd = "/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &";
+                          system(cmd.c_str());
+                          std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                      }
+                      else if (mode == "strobe_party") {
+                          system("/usr/bin/mcu_led 255 0 0 &");
+                          std::this_thread::sleep_for(std::chrono::milliseconds(120));
+                          system("/usr/bin/mcu_led 0 255 0 &");
+                          std::this_thread::sleep_for(std::chrono::milliseconds(120));
+                          system("/usr/bin/mcu_led 0 0 255 &");
+                          std::this_thread::sleep_for(std::chrono::milliseconds(120));
+                      }
+                      else if (mode == "color_fade") {
+                          hue = (hue + 5) % 360;
+                          double rad = hue * 3.14159 / 180.0;
+                          int r = (int)((std::sin(rad) + 1.0) * 127.5);
+                          int g = (int)((std::sin(rad + 2.094) + 1.0) * 127.5);
+                          int b = (int)((std::sin(rad + 4.188) + 1.0) * 127.5);
+                          std::string cmd = "/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &";
+                          system(cmd.c_str());
+                          std::this_thread::sleep_for(std::chrono::milliseconds(250));
+                      }
+                      else {
+                          std::this_thread::sleep_for(std::chrono::seconds(2));
+                      }
+                  } else {
+                      std::this_thread::sleep_for(std::chrono::seconds(2));
+                  }
+              }
+          }
+          """
+
+          main_content = thread_code + "\n" + main_content
+          main_content = re.sub(r'(int\s+main\s*\([^\)]*\)\s*\{)', r'\1\n    std::thread mcuThread(CustomMCUThread);\n    mcuThread.detach();\n', main_content, count=1)
+
+          with open(main_files[0], "w", encoding="utf-8") as f:
+              f.write(main_content)
+          print("[+] Injected C++ thread and updated menu choices.")
           EOF
 
       - name: Build EmulationStation Binary
         run: |
-          # Create build folder at root or inside ES source directory if nested
-          if [ -d "es-app" ] || [ -f "CMakeLists.txt" ]; then
-            mkdir -p build && cd build
-            cmake .. -DCMAKE_BUILD_TYPE=Release
-            make -j$(nproc)
-          else
-            # Search for CMakeLists.txt if ES is located in a subfolder
-            ES_DIR=$(dirname $(find . -name "CMakeLists.txt" | head -n 1))
-            cd "$ES_DIR"
-            mkdir -p build && cd build
-            cmake .. -DCMAKE_BUILD_TYPE=Release
-            make -j$(nproc)
-          fi
+          cd es-source
+          mkdir build && cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release
+          make -j$(nproc)
 
       - name: Verify Binary and Generate RGB Log
         run: |
           python3 - << 'EOF'
-          import os, glob, sys, re
+          import os, glob, sys
 
-          # Find the compiled emulationstation binary
-          es_binaries = glob.glob("**/build/emulationstation", recursive=True)
+          es_binaries = glob.glob("es-source/build/emulationstation")
           if not es_binaries:
-              print("[!] ERROR: Compilation failed or binary not found!")
+              print("[!] ERROR: Compiled binary not found!")
               sys.exit(1)
 
           binary_path = es_binaries[0]
-          print(f"[+] Verification: Found compiled binary at {binary_path}")
+          print(f"[+] Found compiled binary at {binary_path}")
 
-          # Read binary data to verify injected string modes
           with open(binary_path, "rb") as f:
               bin_data = f.read()
 
-          # Check for new mode strings inside the binary
-          expected_modes = ["static", "pulsating", "rainbow", "rainbow_wave", "strobe_party", "color_fade"]
-          found_modes = []
+          expected_modes = ["static", "pulsating", "rainbow", "rainbow_wave", "strobe_party", "color_fade", "battery_status"]
+          found_modes = [mode for mode in expected_modes if mode.encode("utf-8") in bin_data]
 
-          for mode in expected_modes:
-              if mode.encode("utf-8") in bin_data:
-                  found_modes.append(mode)
-
-          # Generate output log report
           log_content = "=== ARKOS4CLONE EMULATIONSTATION RGB MODE REPORT ===\n\n"
           log_content += f"Binary Verified: {binary_path}\n"
           log_content += f"Binary Size: {os.path.getsize(binary_path)} bytes\n\n"
-          log_content += "Status of RGB Effects in Compiled Binary:\n"
+          log_content += "Available LED Options in Compiled Binary:\n"
           
           for mode in expected_modes:
               status = "AVAILABLE [CONFIRMED]" if mode in found_modes else "MISSING [FAILED]"
@@ -112,8 +170,8 @@ jobs:
       - name: Upload Artifacts (Binary & Verification Log)
         uses: actions/upload-artifact@v4
         with:
-          name: emulationstation-m9pro-custom-rgb
+          name: emulationstation-mcu-custom-rgb
           path: |
-            **/build/emulationstation
+            es-source/build/emulationstation
             available_rgb_modes.txt
           retention-days: 14
