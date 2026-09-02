@@ -98,7 +98,7 @@ check_jdk_file() {
 
 check_pm_libs() {
   local pm_libs_dir="$SCRIPT_DIR/bin/pm_libs"
-  local runtimes_url="https://github.com/PortsMaster/PortMaster-New/releases/download/2026-05-24_0536/runtimes.all.aarch64.zip"
+  local runtimes_url="https://github.com/PortsMaster/PortMaster-New/releases/download/2026-08-05_0732/runtimes.all.aarch64.zip"
 
   # 需要的文件列表
   local required_files=(
@@ -128,12 +128,15 @@ check_pm_libs() {
     "godot_4.5.squashfs"
     "godot_4.6.3.mono.squashfs"
     "godot_4.6.3.squashfs"
+    "godot_4.7.1.mono.squashfs"
+    "godot_4.7.1.squashfs"
     "mesa_pkg_0.1.squashfs"
     "mono-6.12.0.122-aarch64.squashfs"
     "python_3.11.squashfs"
     "pyxel_2.2.8_python_3.11.squashfs"
     "pyxel_2.3.18_python_3.11.squashfs"
     "pyxel_2.4.6_python_3.11.squashfs"
+    "pyxel_2.9.5_python_3.11.squashfs"
     "renpy_8.1.3.squashfs"
     "renpy_8.3.4.squashfs"
     "rlvm.squashfs"
@@ -214,7 +217,7 @@ check_work_dir() {
 
 check_portmaster() {
   local pm_dir="$SCRIPT_DIR/PortMaster"
-  local pm_url="https://github.com/PortsMaster/PortMaster-New/releases/download/2026-06-09_2128/PortMaster.zip"
+  local pm_url="https://github.com/PortsMaster/PortMaster-GUI/releases/download/2026.07.28-1212/PortMaster.zip"
 
   if [[ -d "$pm_dir" && -f "$pm_dir/PortMaster.sh" ]]; then
     log_ok "PortMaster 目录已存在"
@@ -260,7 +263,6 @@ check_clone_dependencies() {
   local dirs=(
     "consoles"
     "bin"
-    "bin/adc-key"
     "bin/aic8800DC"
     "bin/json-c3"
     "mod_so/32"
@@ -272,12 +274,15 @@ check_clone_dependencies() {
     "replace_file/retroarch"
     "replace_file/ppsspp"
     "replace_file/flycastsa"
-    "replace_file/flycastsa-2022"
+    "replace_file/freej2mesa"
+    "replace_file/rufflesa"
+    "replace_file/gametank"
     "replace_file/pymo"
     "replace_file/resources"
     "replace_file/retrorun"
     "replace_file/scummvm"
     "replace_file/services"
+    "replace_file/yabasanshiro"
     "replace_file/tools"
     "res"
     "sh"
@@ -307,9 +312,6 @@ check_clone_dependencies() {
     "bin/sdljoymap"
     "bin/sdljoytest"
     "bin/console_detect"
-    "bin/adc-key/adckeys.py"
-    "bin/adc-key/adckeys.sh"
-    "bin/adc-key/adckeys.service"
     "replace_file/351Files"
     "replace_file/es_systems.cfg"
     "replace_file/es_systems.cfg.dual"

@@ -131,13 +131,8 @@ if [[ "$ARKOS_IMAGE_NAME" == *dArkOS* ]]; then
   cp -f ./replace_file/choose_drastic_ver.sh "$PAYLOAD_ROOT/usr/local/bin/" 2>/dev/null || true
   cp -f ./replace_file/choose_ons_ver.sh "$PAYLOAD_ROOT/usr/local/bin/" 2>/dev/null || true
   cp -f ./replace_file/onscripter.sh "$PAYLOAD_ROOT/usr/local/bin/" 2>/dev/null || true
+  cp -f ./replace_file/freej2me.sh "$PAYLOAD_ROOT/usr/local/bin/" 2>/dev/null || true
   cp -f ./replace_file/mediaplayer.sh "$PAYLOAD_ROOT/usr/local/bin/" 2>/dev/null || true
-
-  echo "== 注入 adc-key 服务 =="
-  mkdir -p "$PAYLOAD_ROOT/etc/systemd/system"
-  cp -f ./bin/adc-key/adckeys.py "$PAYLOAD_ROOT/usr/local/bin/" 2>/dev/null || true
-  cp -f ./bin/adc-key/adckeys.sh "$PAYLOAD_ROOT/usr/local/bin/" 2>/dev/null || true
-  cp -f ./bin/adc-key/adckeys.service "$PAYLOAD_ROOT/etc/systemd/system/" 2>/dev/null || true
 
   echo "== 注入 es-service 服务 =="
   mkdir -p "$PAYLOAD_ROOT/etc/systemd/system"
@@ -149,6 +144,17 @@ if [[ "$ARKOS_IMAGE_NAME" == *dArkOS* ]]; then
   cp -f ./bin/zram-service/zram-setup.sh "$PAYLOAD_ROOT/usr/local/bin/" 2>/dev/null || true
   cp -f ./bin/zram-service/zram.conf "$PAYLOAD_ROOT/etc/" 2>/dev/null || true
   cp -f ./bin/zram-service/zram-swap.service "$PAYLOAD_ROOT/etc/systemd/system/" 2>/dev/null || true
+
+  echo "== 注入 batteryplus 服务 =="
+  mkdir -p "$PAYLOAD_ROOT/etc/systemd/system"
+  mkdir -p "$PAYLOAD_ROOT/etc/batteryplus/"
+  cp -f ./bin/batteryplus-service/batteryplus "$PAYLOAD_ROOT/usr/local/bin/" 2>/dev/null || true
+  cp -f ./bin/batteryplus-service/batteryplus.conf "$PAYLOAD_ROOT/etc/batteryplus/" 2>/dev/null || true
+  cp -f ./bin/batteryplus-service/batteryplus.service "$PAYLOAD_ROOT/etc/systemd/system/" 2>/dev/null || true
+
+  echo "== 添加 Gamma =="
+  mkdir -p "$PAYLOAD_ROOT/usr/local/bin"
+  cp -f ./replace_file/gamma/gamma "$PAYLOAD_ROOT/usr/local/bin/" 2>/dev/null || true
 
   echo "== 注入核心与 EmulationStation 文件 =="
   mkdir -p "$PAYLOAD_ROOT/home/ark/.config/retroarch/cores" \
@@ -166,16 +172,18 @@ if [[ "$ARKOS_IMAGE_NAME" == *dArkOS* ]]; then
   echo "== 注入 drastic =="
   mkdir -p "$PAYLOAD_ROOT/opt/drastic"
   cp -a ./replace_file/drastic/. "$PAYLOAD_ROOT/opt/drastic/" 2>/dev/null || true
-  rm -rf "$PAYLOAD_ROOT/opt/drastic/patch" 2>/dev/null || true
 
   echo "== 注入 drastic-kk =="
   mkdir -p "$PAYLOAD_ROOT/opt/drastic-kk"
   cp -a ./replace_file/drastic-kk/. "$PAYLOAD_ROOT/opt/drastic-kk/" 2>/dev/null || true
-  rm -rf "$PAYLOAD_ROOT/opt/drastic-kk/patch" 2>/dev/null || true
 
   echo "== 添加 onscripter-sa =="
   mkdir -p "$PAYLOAD_ROOT/opt/onscripter"
   cp -a ./replace_file/onscripter/. "$PAYLOAD_ROOT/opt/onscripter/" 2>/dev/null || true
+
+  echo "== 添加 freej2me-sa =="
+  mkdir -p "$PAYLOAD_ROOT/opt/freej2mesa"
+  cp -a ./replace_file/freej2mesa/. "$PAYLOAD_ROOT/opt/freej2mesa/" 2>/dev/null || true
 
   echo "== 改用自适应分辨率 Retroarch 1.22.2 =="
   mkdir -p "$PAYLOAD_ROOT/opt/retroarch/bin/"
@@ -186,14 +194,13 @@ if [[ "$ARKOS_IMAGE_NAME" == *dArkOS* ]]; then
   mkdir -p "$PAYLOAD_ROOT/usr/lib/aarch64-linux-gnu/"
   cp -f ./bin/json-c3/* "$PAYLOAD_ROOT/usr/lib/aarch64-linux-gnu/" 2>/dev/null || true
 
-  echo "== 更新 flycastsa v2.6 =="
+  echo "== 更新和添加 flycastsa =="
   mkdir -p "$PAYLOAD_ROOT/opt/flycastsa"
-  cp -a ./replace_file/flycastsa/flycast "$PAYLOAD_ROOT/opt/flycastsa/" 2>/dev/null || true
+  cp -a ./replace_file/flycastsa/. "$PAYLOAD_ROOT/opt/flycastsa/" 2>/dev/null || true
 
-  echo "== 添加 flycastsa-2022 =="
-  mkdir -p "$PAYLOAD_ROOT/opt/flycastsa-2022"
-  cp -a ./replace_file/flycastsa-2022/. "$PAYLOAD_ROOT/opt/flycastsa-2022/" 2>/dev/null || true
-  rm -rf "$PAYLOAD_ROOT/opt/flycastsa-2022/patch" 2>/dev/null || true
+  echo "== 更新和添加 yabasanshiro-sa =="
+  mkdir -p "$PAYLOAD_ROOT/opt/yabasanshiro"
+  cp -a ./replace_file/yabasanshiro/. "$PAYLOAD_ROOT/opt/yabasanshiro/" 2>/dev/null || true
 
   echo "== 注入 retrorun =="
   mkdir -p "$PAYLOAD_ROOT/usr/local/bin"
@@ -257,17 +264,17 @@ EOF
   meta_add "0777" "1000:1000" "/usr/lib/firmware/aic8800DC/*"
   meta_add "0777" "1000:1000" "/opt/351Files"
   meta_add "0777" "1000:1000" "/opt/351Files/*"
-  for f in darkos4atomiswave.sh darkos4dreamcast.sh darkos4naomi.sh darkos4saturn.sh darkos4n64.sh darkos4pico8.sh darkos4get_last_played.sh drastic.sh drastic_kk.sh choose_drastic_ver.sh mediaplayer.sh onscripter.sh choose_ons_ver.sh; do
+  for f in darkos4atomiswave.sh darkos4dreamcast.sh darkos4naomi.sh darkos4saturn.sh darkos4n64.sh darkos4pico8.sh darkos4get_last_played.sh drastic.sh drastic_kk.sh choose_drastic_ver.sh mediaplayer.sh onscripter.sh freej2me.sh choose_ons_ver.sh gamma; do
     meta_add "0777" "1000:1000" "/usr/local/bin/$f"
   done
-  meta_add "0777" "1000:1000" "/usr/local/bin/adckeys.py"
-  meta_add "0777" "1000:1000" "/usr/local/bin/adckeys.sh"
-  meta_add "0777" "1000:1000" "/etc/systemd/system/adckeys.service"
   meta_add "0777" "1000:1000" "/usr/local/bin/es-status-daemon.sh"
   meta_add "0777" "1000:1000" "/etc/systemd/system/es-status-daemon.service"
   meta_add "0777" "1000:1000" "/etc/zram.conf"
   meta_add "0777" "1000:1000" "/usr/local/bin/zram-setup.sh"
   meta_add "0777" "1000:1000" "/etc/systemd/system/zram-swap.service"
+  meta_add "0777" "1000:1000" "/etc/batteryplus/batteryplus.conf"
+  meta_add "0777" "1000:1000" "/usr/local/bin/batteryplus"
+  meta_add "0777" "1000:1000" "/etc/systemd/system/batteryplus.service"
   meta_add "0777" "1000:1000" "/home/ark/.config/retroarch/cores/*"
   meta_add "0777" "1000:1000" "/home/ark/.config/retroarch32/cores/*"
   meta_add "0777" "1000:1000" "/etc/emulationstation/darkos4es_systems.cfg"
@@ -278,12 +285,14 @@ EOF
   meta_add "0777" "1000:1000" "/opt/drastic-kk/*"
   meta_add "0777" "1000:1000" "/opt/onscripter"
   meta_add "0777" "1000:1000" "/opt/onscripter/*"
+  meta_add "0777" "1000:1000" "/opt/freej2mesa"
+  meta_add "0777" "1000:1000" "/opt/freej2mesa/*"
   meta_add "0777" "1000:1000" "/opt/retroarch/bin/"
   meta_add "0777" "1000:1000" "/opt/retroarch/bin/*"
   meta_add "0777" "1000:1000" "/opt/flycastsa"
   meta_add "0777" "1000:1000" "/opt/flycastsa/*"
-  meta_add "0777" "1000:1000" "/opt/flycastsa-2022"
-  meta_add "0777" "1000:1000" "/opt/flycastsa-2022/*"
+  meta_add "0777" "1000:1000" "/opt/yabasanshiro"
+  meta_add "0777" "1000:1000" "/opt/yabasanshiro/*"
   meta_add "0777" "1000:1000" "/usr/lib/aarch64-linux-gnu/libjson-c.so*"
   meta_add "0777" "1000:1000" "/usr/local/bin/cpymo"
   meta_add "0777" "1000:1000" "/usr/local/bin/pymo.sh"
@@ -362,20 +371,20 @@ else
   cp -f ./replace_file/naomi.sh "$PAYLOAD_ROOT/usr/local/bin/" 2>/dev/null || true
   cp -f ./replace_file/saturn.sh "$PAYLOAD_ROOT/usr/local/bin/" 2>/dev/null || true
   cp -f ./replace_file/n64.sh "$PAYLOAD_ROOT/usr/local/bin/" 2>/dev/null || true
+  cp -f ./replace_file/easyrpg.sh "$PAYLOAD_ROOT/usr/local/bin/" 2>/dev/null || true
+  cp -f ./replace_file/mvem.sh "$PAYLOAD_ROOT/usr/local/bin/" 2>/dev/null || true
+  cp -f ./replace_file/gametank.sh "$PAYLOAD_ROOT/usr/local/bin/" 2>/dev/null || true
+  cp -f ./replace_file/gametankkeydemon.py "$PAYLOAD_ROOT/usr/local/bin/" 2>/dev/null || true
+  cp -f ./replace_file/flash.sh "$PAYLOAD_ROOT/usr/local/bin/" 2>/dev/null || true
   cp -f ./replace_file/pico8.sh "$PAYLOAD_ROOT/usr/local/bin/" 2>/dev/null || true
   cp -f ./replace_file/drastic.sh "$PAYLOAD_ROOT/usr/local/bin/" 2>/dev/null || true
   cp -f ./replace_file/drastic_kk.sh "$PAYLOAD_ROOT/usr/local/bin/" 2>/dev/null || true
   cp -f ./replace_file/choose_drastic_ver.sh "$PAYLOAD_ROOT/usr/local/bin/" 2>/dev/null || true
   cp -f ./replace_file/choose_ons_ver.sh "$PAYLOAD_ROOT/usr/local/bin/" 2>/dev/null || true
   cp -f ./replace_file/onscripter.sh "$PAYLOAD_ROOT/usr/local/bin/" 2>/dev/null || true
+  cp -f ./replace_file/freej2me.sh "$PAYLOAD_ROOT/usr/local/bin/" 2>/dev/null || true
   cp -f ./replace_file/mediaplayer.sh "$PAYLOAD_ROOT/usr/local/bin/" 2>/dev/null || true
   cp -f ./replace_file/get_last_played.sh "$PAYLOAD_ROOT/usr/local/bin/" 2>/dev/null || true
-
-  echo "== 注入 adc-key 服务 =="
-  mkdir -p "$PAYLOAD_ROOT/etc/systemd/system"
-  cp -f ./bin/adc-key/adckeys.py "$PAYLOAD_ROOT/usr/local/bin/" 2>/dev/null || true
-  cp -f ./bin/adc-key/adckeys.sh "$PAYLOAD_ROOT/usr/local/bin/" 2>/dev/null || true
-  cp -f ./bin/adc-key/adckeys.service "$PAYLOAD_ROOT/etc/systemd/system/" 2>/dev/null || true
 
   echo "== 注入 es-service 服务 =="
   mkdir -p "$PAYLOAD_ROOT/etc/systemd/system"
@@ -388,13 +397,26 @@ else
   cp -f ./bin/zram-service/zram.conf "$PAYLOAD_ROOT/etc/" 2>/dev/null || true
   cp -f ./bin/zram-service/zram-swap.service "$PAYLOAD_ROOT/etc/systemd/system/" 2>/dev/null || true
 
+  echo "== 注入 batteryplus 服务 =="
+  mkdir -p "$PAYLOAD_ROOT/etc/systemd/system"
+  mkdir -p "$PAYLOAD_ROOT/etc/batteryplus/"
+  cp -f ./bin/batteryplus-service/batteryplus "$PAYLOAD_ROOT/usr/local/bin/" 2>/dev/null || true
+  cp -f ./bin/batteryplus-service/batteryplus.conf "$PAYLOAD_ROOT/etc/batteryplus/" 2>/dev/null || true
+  cp -f ./bin/batteryplus-service/batteryplus.service "$PAYLOAD_ROOT/etc/systemd/system/" 2>/dev/null || true
+
+  echo "== 添加 Gamma =="
+  mkdir -p "$PAYLOAD_ROOT/usr/local/bin"
+  cp -f ./replace_file/gamma/gamma "$PAYLOAD_ROOT/usr/local/bin/" 2>/dev/null || true
+
   echo "== 注入核心与 EmulationStation 文件 =="
   mkdir -p "$PAYLOAD_ROOT/home/ark/.config/retroarch/cores" \
            "$PAYLOAD_ROOT/home/ark/.config/retroarch32/cores" \
            "$PAYLOAD_ROOT/etc/emulationstation" \
            "$PAYLOAD_ROOT/usr/bin/emulationstation/resources/"
   cp -f ./mod_so/64/* "$PAYLOAD_ROOT/home/ark/.config/retroarch/cores/" 2>/dev/null || true
+  cp -f ./mod_so/arkos_64/* "$PAYLOAD_ROOT/home/ark/.config/retroarch/cores/" 2>/dev/null || true
   cp -f ./mod_so/32/* "$PAYLOAD_ROOT/home/ark/.config/retroarch32/cores/" 2>/dev/null || true
+  cp -f ./mod_so/arkos_32/* "$PAYLOAD_ROOT/home/ark/.config/retroarch32/cores/" 2>/dev/null || true
   cp -f ./replace_file/es_systems.cfg "$PAYLOAD_ROOT/etc/emulationstation/" 2>/dev/null || true
   cp -f ./replace_file/es_systems.cfg.dual "$PAYLOAD_ROOT/etc/emulationstation/" 2>/dev/null || true
   cp -rf ./replace_file/resources/* "$PAYLOAD_ROOT/usr/bin/emulationstation/resources/" 2>/dev/null || true
@@ -404,16 +426,18 @@ else
   echo "== 注入 drastic =="
   mkdir -p "$PAYLOAD_ROOT/opt/drastic"
   cp -a ./replace_file/drastic/. "$PAYLOAD_ROOT/opt/drastic/" 2>/dev/null || true
-  rm -rf "$PAYLOAD_ROOT/opt/drastic/patch" 2>/dev/null || true
 
   echo "== 注入 drastic-kk =="
   mkdir -p "$PAYLOAD_ROOT/opt/drastic-kk"
   cp -a ./replace_file/drastic-kk/. "$PAYLOAD_ROOT/opt/drastic-kk/" 2>/dev/null || true
-  rm -rf "$PAYLOAD_ROOT/opt/drastic-kk/patch" 2>/dev/null || true
 
   echo "== 添加 onscripter-sa =="
   mkdir -p "$PAYLOAD_ROOT/opt/onscripter"
   cp -a ./replace_file/onscripter/. "$PAYLOAD_ROOT/opt/onscripter/" 2>/dev/null || true
+
+  echo "== 添加 freej2me-sa =="
+  mkdir -p "$PAYLOAD_ROOT/opt/freej2mesa"
+  cp -a ./replace_file/freej2mesa/. "$PAYLOAD_ROOT/opt/freej2mesa/" 2>/dev/null || true
 
   echo "== 改用自适应分辨率 Retroarch 1.22.2 =="
   mkdir -p "$PAYLOAD_ROOT/opt/retroarch/bin/"
@@ -424,27 +448,45 @@ else
   mkdir -p "$PAYLOAD_ROOT/usr/lib/aarch64-linux-gnu/"
   cp -f ./bin/json-c3/* "$PAYLOAD_ROOT/usr/lib/aarch64-linux-gnu/" 2>/dev/null || true
 
+  echo "== 更新 Fake08-sa =="
+  mkdir -p "$PAYLOAD_ROOT/opt/fake08"
+  cp -a ./replace_file/fake08/. "$PAYLOAD_ROOT/opt/fake08/" 2>/dev/null || true
+
   echo "== 更新 PPSSPP 1.20.4 =="
   mkdir -p "$PAYLOAD_ROOT/opt/ppsspp"
   cp -a ./replace_file/ppsspp/. "$PAYLOAD_ROOT/opt/ppsspp/" 2>/dev/null || true
 
-  echo "== 更新 ScummVM v2026.2.0 =="
+  echo "== 替换 PPSSPP-2021 =="
+  mkdir -p "$PAYLOAD_ROOT/opt/ppsspp-2021"
+  cp -a ./replace_file/ppsspp-2021/. "$PAYLOAD_ROOT/opt/ppsspp-2021/" 2>/dev/null || true
+
+  echo "== 更新 mupen64plus =="
+  mkdir -p "$PAYLOAD_ROOT/opt/mupen64plus"
+  cp -a ./replace_file/mupen64plus/. "$PAYLOAD_ROOT/opt/mupen64plus/" 2>/dev/null || true
+
+  echo "== 更新 ScummVM v2026.3.0 =="
   mkdir -p "$PAYLOAD_ROOT/opt/scummvm"
   cp -a ./replace_file/scummvm/. "$PAYLOAD_ROOT/opt/scummvm/" 2>/dev/null || true
 
-  echo "== 更新 flycastsa v2.6 =="
+  echo "== 更新和添加 flycastsa =="
   mkdir -p "$PAYLOAD_ROOT/opt/flycastsa"
-  cp -a ./replace_file/flycastsa/flycast "$PAYLOAD_ROOT/opt/flycastsa/" 2>/dev/null || true
+  cp -a ./replace_file/flycastsa/. "$PAYLOAD_ROOT/opt/flycastsa/" 2>/dev/null || true
 
-  echo "== 添加 flycastsa-2022 =="
-  mkdir -p "$PAYLOAD_ROOT/opt/flycastsa-2022"
-  cp -a ./replace_file/flycastsa-2022/. "$PAYLOAD_ROOT/opt/flycastsa-2022/" 2>/dev/null || true
-  rm -rf "$PAYLOAD_ROOT/opt/flycastsa-2022/patch" 2>/dev/null || true
+  echo "== 更新 duckstation =="
+  mkdir -p "$PAYLOAD_ROOT/opt/duckstation"
+  cp -a ./replace_file/duckstation/. "$PAYLOAD_ROOT/opt/duckstation/" 2>/dev/null || true
+
+  echo "== 添加 rufflesa =="
+  mkdir -p "$PAYLOAD_ROOT/opt/rufflesa"
+  cp -a ./replace_file/rufflesa/. "$PAYLOAD_ROOT/opt/rufflesa/" 2>/dev/null || true
+
+  echo "== 添加 gametank-sa =="
+  mkdir -p "$PAYLOAD_ROOT/opt/gametank"
+  cp -a ./replace_file/gametank/. "$PAYLOAD_ROOT/opt/gametank/" 2>/dev/null || true
 
   echo "== 注入 retrorun =="
   mkdir -p "$PAYLOAD_ROOT/usr/local/bin"
-  cp -r ./replace_file/retrorun/retrorun32 "$PAYLOAD_ROOT/usr/local/bin/" 2>/dev/null || true
-  cp -r ./replace_file/retrorun/retrorun "$PAYLOAD_ROOT/usr/local/bin/" 2>/dev/null || true
+  cp -r ./replace_file/retrorun/. "$PAYLOAD_ROOT/usr/local/bin/" 2>/dev/null || true
 
   echo "== 注入 pymo =="
   cp -r ./replace_file/pymo/cpymo "$PAYLOAD_ROOT/usr/local/bin/" 2>/dev/null || true
@@ -454,6 +496,19 @@ else
   cp -r ./replace_file/ogage "$PAYLOAD_ROOT/usr/local/bin/" 2>/dev/null || true
   mkdir -p "$PAYLOAD_ROOT/home/ark/.quirks"
   cp -r ./replace_file/ogage "$PAYLOAD_ROOT/home/ark/.quirks/" 2>/dev/null || true
+
+  echo "== 更新和添加 yabasanshiro-sa =="
+  mkdir -p "$PAYLOAD_ROOT/opt/yabasanshiro"
+  cp -a ./replace_file/yabasanshiro/. "$PAYLOAD_ROOT/opt/yabasanshiro/" 2>/dev/null || true
+
+  echo "== 添加 krkr2 =="
+  mkdir -p "$PAYLOAD_ROOT/opt/krkr2"
+  cp -a ./replace_file/krkr2/. "$PAYLOAD_ROOT/opt/krkr2/" 2>/dev/null || true
+
+  echo "== 添加 OpenborFF =="
+  mkdir -p "$PAYLOAD_ROOT/opt/OpenBorFF"
+  cp -a ./replace_file/OpenBorFF/. "$PAYLOAD_ROOT/opt/OpenBorFF/" 2>/dev/null || true
+  cp -a ./replace_file/OpenBor/. "$PAYLOAD_ROOT/opt/OpenBor/" 2>/dev/null || true
 
   echo "== 注入 services / tools =="
   mkdir -p "$PAYLOAD_ROOT/etc/systemd/system" \
@@ -502,17 +557,17 @@ EOF
   meta_add "0777" "1002:1002" "/usr/lib/firmware/aic8800DC/*"
   meta_add "0777" "1002:1002" "/opt/351Files"
   meta_add "0777" "1002:1002" "/opt/351Files/*"
-  for f in atomiswave.sh dreamcast.sh naomi.sh saturn.sh n64.sh pico8.sh drastic.sh drastic_kk.sh choose_drastic_ver.sh mediaplayer.sh get_last_played.sh choose_ons_ver.sh onscripter.sh; do
+  for f in atomiswave.sh dreamcast.sh naomi.sh saturn.sh n64.sh mvem.sh easyrpg.sh gametank.sh flash.sh gametankkeydemon.py pico8.sh drastic.sh drastic_kk.sh choose_drastic_ver.sh mediaplayer.sh get_last_played.sh choose_ons_ver.sh onscripter.sh freej2me.sh gamma; do
     meta_add "0777" "1002:1002" "/usr/local/bin/$f"
   done
-  meta_add "0777" "1002:1002" "/usr/local/bin/adckeys.py"
-  meta_add "0777" "1002:1002" "/usr/local/bin/adckeys.sh"
-  meta_add "0777" "1002:1002" "/etc/systemd/system/adckeys.service"
   meta_add "0777" "1002:1002" "/usr/local/bin/es-status-daemon.sh"
   meta_add "0777" "1002:1002" "/etc/systemd/system/es-status-daemon.service"
   meta_add "0777" "1002:1002" "/etc/zram.conf"
   meta_add "0777" "1002:1002" "/usr/local/bin/zram-setup.sh"
   meta_add "0777" "1002:1002" "/etc/systemd/system/zram-swap.service"
+  meta_add "0777" "1002:1002" "/etc/batteryplus/batteryplus.conf"
+  meta_add "0777" "1002:1002" "/usr/local/bin/batteryplus"
+  meta_add "0777" "1002:1002" "/etc/systemd/system/batteryplus.service"
   meta_add "0777" "1002:1002" "/home/ark/.config/retroarch/cores/*"
   meta_add "0777" "1002:1002" "/home/ark/.config/retroarch32/cores/*"
   meta_add "0777" "1002:1002" "/etc/emulationstation/es_systems.cfg"
@@ -523,16 +578,32 @@ EOF
   meta_add "0777" "1002:1002" "/opt/drastic-kk/*"
   meta_add "0777" "1002:1002" "/opt/onscripter"
   meta_add "0777" "1002:1002" "/opt/onscripter/*"
+  meta_add "0777" "1002:1002" "/opt/freej2mesa"
+  meta_add "0777" "1002:1002" "/opt/freej2mesa/*"
   meta_add "0777" "1002:1002" "/opt/retroarch/bin/"
   meta_add "0777" "1002:1002" "/opt/retroarch/bin/*"
+  meta_add "0777" "1002:1002" "/opt/fake08"
+  meta_add "0777" "1002:1002" "/opt/fake08/*"
   meta_add "0777" "1002:1002" "/opt/ppsspp"
   meta_add "0777" "1002:1002" "/opt/ppsspp/*"
+  meta_add "0777" "1002:1002" "/opt/ppsspp-2021"
+  meta_add "0777" "1002:1002" "/opt/ppsspp-2021/*"
+  meta_add "0777" "1002:1002" "/opt/mupen64plus"
+  meta_add "0777" "1002:1002" "/opt/mupen64plus/*"
   meta_add "0777" "1002:1002" "/opt/scummvm"
   meta_add "0777" "1002:1002" "/opt/scummvm/*"
   meta_add "0777" "1002:1002" "/opt/flycastsa"
   meta_add "0777" "1002:1002" "/opt/flycastsa/*"
-  meta_add "0777" "1002:1002" "/opt/flycastsa-2022"
-  meta_add "0777" "1002:1002" "/opt/flycastsa-2022/*"
+  meta_add "0777" "1002:1002" "/opt/duckstation"
+  meta_add "0777" "1002:1002" "/opt/duckstation/*"
+  meta_add "0777" "1002:1002" "/opt/yabasanshiro"
+  meta_add "0777" "1002:1002" "/opt/yabasanshiro/*"
+  meta_add "0777" "1002:1002" "/opt/krkr2"
+  meta_add "0777" "1002:1002" "/opt/krkr2/*"
+  meta_add "0777" "1002:1002" "/opt/OpenBorFF"
+  meta_add "0777" "1002:1002" "/opt/OpenBorFF/*"
+  meta_add "0777" "1002:1002" "/opt/OpenBor"
+  meta_add "0777" "1002:1002" "/opt/OpenBor/*"
   meta_add "0777" "1002:1002" "/usr/lib/aarch64-linux-gnu/libjson-c.so*"
   meta_add "0777" "1002:1002" "/usr/local/bin/cpymo"
   meta_add "0777" "1002:1002" "/usr/local/bin/pymo.sh"
@@ -547,6 +618,8 @@ EOF
   meta_add "0777" "1002:1002" "/usr/bin/emulationstation/emulationstation/*"
   meta_add "0777" "1002:1002" "/usr/local/bin/retrorun32"
   meta_add "0777" "1002:1002" "/usr/local/bin/retrorun"
+  meta_add "0777" "1002:1002" "/usr/local/bin/retrorunsdl32"
+  meta_add "0777" "1002:1002" "/usr/local/bin/retrorunsdl"
   meta_add "0777" "1002:1002" "/usr/local/bin/ogage"
   meta_add "0777" "1002:1002" "/home/ark/.quirks/ogage"
   meta_add "0777" "1002:1002" "/etc/systemd/system/351mp.service"
@@ -652,7 +725,7 @@ else
 fi
 
 log "=== Step 1: Stop conflicting services ==="
-for s in adckeys.service zram-swap.service es-status-daemon.service batt_led.service ddtbcheck.service 351mp.service mpv.service oga_events; do
+for s in zram-swap.service batteryplus.service es-status-daemon.service batt_led.service ddtbcheck.service 351mp.service mpv.service oga_events; do
   if [[ -e "/etc/systemd/system/$s" || -e "/lib/systemd/system/$s" ]]; then
     svc_stop_disable "$s"
   fi
@@ -851,8 +924,6 @@ fix_modules_perms
 log "=== Step 10: Enable services ==="
 if have_systemctl; then
   systemctl daemon-reload 2>/dev/null || true
-  systemctl enable adckeys.service 2>/dev/null && log "Enabled: adckeys.service" || true
-  systemctl restart adckeys.service 2>/dev/null && log "Started: adckeys.service" || true
   systemctl enable es-status-daemon.service 2>/dev/null && log "Enabled: es-status-daemon.service" || true
   systemctl restart es-status-daemon.service 2>/dev/null && log "Started: es-status-daemon.service" || true
   chmod 777 /usr/local/bin/ogage 2>/dev/null && log "Fixed: ogage chmod 777" || true

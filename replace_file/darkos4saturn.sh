@@ -2,9 +2,6 @@
 
 if [[ $1 == *"standalone"* ]]; then
   directory=$(dirname "$2" | cut -d "/" -f2)
-  if [[ ! -d "/$directory/saturn/yabasanshiro" ]]; then
-    mkdir /$directory/saturn/yabasanshiro
-  fi
   cd /opt/yabasanshiro
   if [[ ! -f "input.cfg" ]]; then
     if [[ -f "keymapv2.json" ]]; then
@@ -14,7 +11,27 @@ if [[ $1 == *"standalone"* ]]; then
   fi
   echo "VAR=yaba" > /home/ark/.config/KILLIT
   sudo systemctl restart killer_daemon.service
-  if [[ $1 == "standalone-bios" ]]; then
+  if grep -q '<string name="Language" value="zh-CN" />' /home/ark/.emulationstation/es_settings.cfg; then
+    export LANG=zh_CN.UTF-8 
+    export LC_ALL=zh_CN.UTF-8
+  fi
+  if [[ $1 == *"pi4"* ]]; then
+    YABA_BIN="./yabasanshiro-pi4"
+    if [[ ! -d "/$directory/saturn/yabasanshiro-pi4" ]]; then
+      mkdir /$directory/saturn/yabasanshiro-pi4
+    fi
+  elif [[ $1 == *"2412"* ]]; then
+    YABA_BIN="./yabasanshiro-2412"
+    if [[ ! -d "/$directory/saturn/yabasanshiro-2412" ]]; then
+      mkdir /$directory/saturn/yabasanshiro-2412
+    fi
+  else
+    YABA_BIN="./yabasanshiro"
+    if [[ ! -d "/$directory/saturn/yabasanshiro" ]]; then
+      mkdir /$directory/saturn/yabasanshiro
+    fi
+  fi
+  if [[ $1 == *"-bios"* ]]; then
     if [[ ! -f "/$directory/bios/saturn_bios.bin" ]]; then
       printf "\033c" >> /dev/tty1
       printf "\033[1;33m" >> /dev/tty1
@@ -24,10 +41,10 @@ if [[ $1 == *"standalone"* ]]; then
       sleep 10
       printf "\033[0m" >> /dev/tty1
     else
-      ./yabasanshiro -r 3 -i "$2" -b /$directory/bios/saturn_bios.bin
+      LD_LIBRARY_PATH=/home/ark/.quirks/libs/yabasanshiro_libs/ $YABA_BIN -r 3 -i "$2" -b /$directory/bios/saturn_bios.bin
     fi
   else
-    ./yabasanshiro -r 3 -i "$2"
+    LD_LIBRARY_PATH=/home/ark/.quirks/libs/yabasanshiro_libs/ $YABA_BIN -r 3 -i "$2"
   fi
   sudo systemctl stop killer_daemon.service
   sudo systemctl restart ogage &
