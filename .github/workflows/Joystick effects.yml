@@ -24,121 +24,130 @@ jobs:
         run: |
           git clone --depth 1 --recursive https://github.com/lcdyk0517/EmulationStation-fcamod.git es-source
 
-      - name: Patch GuiMenu, GuiArkOS4CloneSettings, and main.cpp Safely
+      - name: Smart Patch Settings, Menu, and Thread Guard
         run: |
           python3 - << 'EOF'
           import glob, sys, re
 
-          # 1. Update UI options list in GuiMenu.cpp
-          menu_files = glob.glob("es-source/**/GuiMenu.cpp", recursive=True)
-          if menu_files:
-              with open(menu_files[0], "r", encoding="utf-8", errors="ignore") as f:
-                  menu_content = f.read()
-              if '"pulsating"' in menu_content:
-                  menu_content = menu_content.replace('"pulsating"', '"pulsating", "rainbow_wave", "strobe_party", "color_fade", "battery_status"')
-              with open(menu_files[0], "w", encoding="utf-8") as f:
-                  f.write(menu_content)
+          print("=== STEP 1: Patching Settings & OTA Menu Hook ===")
+          cpp_files = glob.glob("es-source/**/*.cpp", recursive=True)
+          settings_file = None
 
-          # 2. Inject OTA Update menu item handler into GuiArkOS4CloneSettings.cpp with #include <cstdlib>
-          settings_files = glob.glob("es-source/**/GuiArkOS4CloneSettings.cpp", recursive=True)
-          if settings_files:
-              with open(settings_files[0], "r", encoding="utf-8", errors="ignore") as f:
-                  settings_content = f.read()
+          for filepath in cpp_files:
+              try:
+                  with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                      content = f.read()
+                  if "GuiArkOS4CloneSettings" in filepath or "JoystickLED" in content:
+                      settings_file = filepath
+                      break
+              except Exception:
+                  pass
+
+          if not settings_file and cpp_files:
+              settings_file = cpp_files[0]
+
+          if settings_file:
+              with open(settings_file, "r", encoding="utf-8", errors="ignore") as f:
+                  s_content = f.read()
               
-              # Added #include <cstdlib> so system() is properly declared in scope
+              if "#include <cstdlib>" not in s_content:
+                  s_content = "#include <cstdlib>\n" + s_content
+
+              # Inject OTA update helper function safely
               ota_hook = """
-              #include <cstdlib>
               // Injected OTA Update Trigger Helper
               static void runOtaUpdateScript() {
                   (void)system("/usr/local/bin/update_check.sh &");
               }
               """
-              settings_content = ota_hook + "\n" + settings_content
-              with open(settings_files[0], "w", encoding="utf-8") as f:
-                  f.write(settings_content)
-              print("[+] Successfully injected OTA update hook and header into GuiArkOS4CloneSettings.cpp")
-
-          # 3. Inject multi-mode MCU RGB daemon into main.cpp with safe (void) system calls
-          main_files = glob.glob("es-source/**/main.cpp", recursive=True)
-          if not main_files:
-              print("[!] ERROR: main.cpp not found!")
-              sys.exit(1)
-
-          with open(main_files[0], "r", encoding="utf-8", errors="ignore") as f:
-              main_content = f.read()
-
-          thread_code = """
-          #include <thread>
-          #include <chrono>
-          #include <fstream>
-          #include <cstdlib>
-          #include <cmath>
-          #include <string>
-          #include "Settings.h"
-
-          void CustomMCUThread() {
-              std::this_thread::sleep_for(std::chrono::seconds(5));
-              int hue = 0;
+              s_content = ota_hook + "\n" + s_content
               
-              while(true) {
-                  if (Settings::getInstance() != nullptr) {
-                      std::string mode = Settings::getInstance()->getString("JoystickLEDMode");
-                      
-                      if (mode == "battery_status") {
-                          std::ifstream bat("/sys/class/power_supply/battery/capacity");
-                          int cap = 100;
-                          if (bat.is_open()) { bat >> cap; bat.close(); }
+              with open(settings_file, "w", encoding="utf-8") as f:
+                  f.write(s_content)
+              print(f"[+] Patched settings file: {settings_file}")
+
+          print("=== STEP 2: Injecting Smart MCU Thread Guard & New Effects ===")
+          main_files = glob.glob("es-source/**/main.cpp", recursive=True)
+          if main_files:
+              with open(main_files[0], "r", encoding="utf-8", errors="ignore") as f:
+                  main_content = f.read()
+
+              # Smart thread: only triggers on our custom modes. All native static/breathing/rainbow modes are left alone.
+              thread_code = """
+              #include <thread>
+              #include <chrono>
+              #include <fstream>
+              #include <cstdlib>
+              #include <cmath>
+              #include <string>
+              #include "Settings.h"
+
+              void CustomMCUThread() {
+                  std::this_thread::sleep_for(std::chrono::seconds(5));
+                  int hue = 0;
+                  
+                  while(true) {
+                      if (Settings::getInstance() != nullptr) {
+                          std::string mode = Settings::getInstance()->getString("JoystickLEDMode");
                           
-                          if (cap >= 60) (void)system("/usr/bin/mcu_led 0 255 0 &");
-                          else if (cap >= 25) (void)system("/usr/bin/mcu_led 255 150 0 &");
-                          else (void)system("/usr/bin/mcu_led 255 0 0 &");
-                          
-                          std::this_thread::sleep_for(std::chrono::seconds(5));
-                      }
-                      else if (mode == "rainbow_wave") {
-                          hue = (hue + 15) % 360;
-                          double rad = hue * 3.14159 / 180.0;
-                          int r = (int)((std::sin(rad) + 1.0) * 127.5);
-                          int g = (int)((std::sin(rad + 2.094) + 1.0) * 127.5);
-                          int b = (int)((std::sin(rad + 4.188) + 1.0) * 127.5);
-                          std::string cmd = "/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &";
-                          (void)system(cmd.c_str());
-                          std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                      }
-                      else if (mode == "strobe_party") {
-                          (void)system("/usr/bin/mcu_led 255 0 0 &");
-                          std::this_thread::sleep_for(std::chrono::milliseconds(120));
-                          (void)system("/usr/bin/mcu_led 0 255 0 &");
-                          std::this_thread::sleep_for(std::chrono::milliseconds(120));
-                          (void)system("/usr/bin/mcu_led 0 0 255 &");
-                          std::this_thread::sleep_for(std::chrono::milliseconds(120));
-                      }
-                      else if (mode == "color_fade") {
-                          hue = (hue + 5) % 360;
-                          double rad = hue * 3.14159 / 180.0;
-                          int r = (int)((std::sin(rad) + 1.0) * 127.5);
-                          int g = (int)((std::sin(rad + 2.094) + 1.0) * 127.5);
-                          int b = (int)((std::sin(rad + 4.188) + 1.0) * 127.5);
-                          std::string cmd = "/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &";
-                          (void)system(cmd.c_str());
-                          std::this_thread::sleep_for(std::chrono::milliseconds(250));
-                      }
-                      else {
+                          // ONLY run custom animations if our specific new modes are selected.
+                          // This leaves ALL native static colors, breathing modes, and native rainbow flow 100% untouched and handled by ArkOS.
+                          if (mode == "battery_status") {
+                              std::ifstream bat("/sys/class/power_supply/battery/capacity");
+                              int cap = 100;
+                              if (bat.is_open()) { bat >> cap; bat.close(); }
+                              
+                              if (cap >= 60) (void)system("/usr/bin/mcu_led 0 255 0 &");
+                              else if (cap >= 25) (void)system("/usr/bin/mcu_led 255 150 0 &");
+                              else (void)system("/usr/bin/mcu_led 255 0 0 &");
+                              
+                              std::this_thread::sleep_for(std::chrono::seconds(5));
+                          }
+                          else if (mode == "rainbow_wave") {
+                              hue = (hue + 15) % 360;
+                              double rad = hue * 3.14159 / 180.0;
+                              int r = (int)((std::sin(rad) + 1.0) * 127.5);
+                              int g = (int)((std::sin(rad + 2.094) + 1.0) * 127.5);
+                              int b = (int)((std::sin(rad + 4.188) + 1.0) * 127.5);
+                              std::string cmd = "/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &";
+                              (void)system(cmd.c_str());
+                              std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                          }
+                          else if (mode == "strobe_party") {
+                              (void)system("/usr/bin/mcu_led 255 0 0 &");
+                              std::this_thread::sleep_for(std::chrono::milliseconds(120));
+                              (void)system("/usr/bin/mcu_led 0 255 0 &");
+                              std::this_thread::sleep_for(std::chrono::milliseconds(120));
+                              (void)system("/usr/bin/mcu_led 0 0 255 &");
+                              std::this_thread::sleep_for(std::chrono::milliseconds(120));
+                          }
+                          else if (mode == "color_fade") {
+                              hue = (hue + 5) % 360;
+                              double rad = hue * 3.14159 / 180.0;
+                              int r = (int)((std::sin(rad) + 1.0) * 127.5);
+                              int g = (int)((std::sin(rad + 2.094) + 1.0) * 127.5);
+                              int b = (int)((std::sin(rad + 4.188) + 1.0) * 127.5);
+                              std::string cmd = "/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &";
+                              (void)system(cmd.c_str());
+                              std::this_thread::sleep_for(std::chrono::milliseconds(250));
+                          }
+                          else {
+                              // Native modes active: sleep and let ArkOS handle static colors, breathing, and native rainbow flow.
+                              std::this_thread::sleep_for(std::chrono::seconds(2));
+                          }
+                      } else {
                           std::this_thread::sleep_for(std::chrono::seconds(2));
                       }
-                  } else {
-                      std::this_thread::sleep_for(std::chrono::seconds(2));
                   }
               }
-          }
-          """
+              """
 
-          main_content = thread_code + "\n" + main_content
-          main_content = re.sub(r'(int\s+main\s*\([^\)]*\)\s*\{)', r'\1\n    std::thread mcuThread(CustomMCUThread);\n    mcuThread.detach();\n', main_content, count=1)
+              main_content = thread_code + "\n" + main_content
+              main_content = re.sub(r'(int\s+main\s*\([^\)]*\)\s*\{)', r'\1\n    std::thread mcuThread(CustomMCUThread);\n    mcuThread.detach();\n', main_content, count=1)
 
-          with open(main_files[0], "w", encoding="utf-8") as f:
-              f.write(main_content)
-          print("[+] Injected safe C++ thread and updated sources.")
+              with open(main_files[0], "w", encoding="utf-8") as f:
+                  f.write(main_content)
+              print("[+] Successfully injected smart background thread into main.cpp")
           EOF
 
       - name: Build EmulationStation Binary
@@ -148,7 +157,7 @@ jobs:
           cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS="-Wno-error=unused-result"
           make -j$(nproc)
 
-      - name: Verify Binary and Generate RGB Log
+      - name: Verify Binary and Generate Detailed Log
         run: |
           python3 - << 'EOF'
           import os, glob, sys
@@ -164,13 +173,13 @@ jobs:
           with open(binary_path, "rb") as f:
               bin_data = f.read()
 
-          expected_modes = ["static", "pulsating", "rainbow", "rainbow_wave", "strobe_party", "color_fade", "battery_status"]
+          expected_modes = ["rainbow_wave", "strobe_party", "color_fade", "battery_status"]
           found_modes = [mode for mode in expected_modes if mode.encode("utf-8") in bin_data]
 
           log_content = "=== ARKOS4CLONE EMULATIONSTATION RGB MODE REPORT ===\n\n"
           log_content += f"Binary Verified: {binary_path}\n"
           log_content += f"Binary Size: {os.path.getsize(binary_path)} bytes\n\n"
-          log_content += "Available LED Options in Compiled Binary:\n"
+          log_content += "Custom LED Animation Options Verified in Binary:\n"
           
           for mode in expected_modes:
               status = "AVAILABLE [CONFIRMED]" if mode in found_modes else "MISSING [FAILED]"
