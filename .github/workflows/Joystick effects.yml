@@ -24,56 +24,78 @@ jobs:
         run: |
           git clone --depth 1 --recursive https://github.com/lcdyk0517/EmulationStation-fcamod.git es-source
 
-      - name: Smart Patch Settings, Menu, and Thread Guard
+      - name: Deep Scan Codebase & Auto-Integrate Custom LED Modes
         run: |
           python3 - << 'EOF'
           import glob, sys, re
 
-          print("=== STEP 1: Patching Settings & OTA Menu Hook Safely ===")
-          cpp_files = glob.glob("es-source/**/*.cpp", recursive=True)
-          settings_file = None
+          print("=== STEP 1: Deep Scanning Codebase for LED & Settings Logic ===")
+          all_files = glob.glob("es-source/**/*.*", recursive=True)
+          
+          target_cpp = None
+          main_cpp = None
 
-          for filepath in cpp_files:
-              try:
-                  with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-                      content = f.read()
-                  if "GuiArkOS4CloneSettings" in filepath or "JoystickLED" in content:
-                      settings_file = filepath
+          for filepath in all_files:
+              if filepath.endswith(('.cpp', '.h')):
+                  try:
+                      with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                          content = f.read()
+                      
+                      # Identify files handling settings, menus, or LED controls
+                      if "JoystickLED" in content or "mcu_led" in content or "GuiArkOS4CloneSettings" in filepath:
+                          if not target_cpp:
+                              target_cpp = filepath
+                              print(f"[+] Discovered primary LED settings file: {target_cpp}")
+                      
+                      if filepath.endswith("main.cpp"):
+                          main_cpp = filepath
+                  except Exception:
+                      pass
+
+          if not target_cpp and all_files:
+              # Fallback to gui settings file if explicit match isn't found
+              for filepath in all_files:
+                  if "Gui" in filepath and filepath.endswith(".cpp"):
+                      target_cpp = filepath
+                      print(f"[+] Fallback settings file selected: {target_cpp}")
                       break
-              except Exception:
-                  pass
 
-          if not settings_file and cpp_files:
-              settings_file = cpp_files[0]
+          if target_cpp:
+              with open(target_cpp, "r", encoding="utf-8", errors="ignore") as f:
+                  t_content = f.read()
 
-          if settings_file:
-              with open(settings_file, "r", encoding="utf-8", errors="ignore") as f:
-                  s_content = f.read()
-              
+              if "#include <cstdlib>" not in t_content:
+                  t_content = "#include <cstdlib>\n" + t_content
+
+              # Inject OTA update helper function safely
               ota_hook = """
-              #include <cstdlib>
               // Injected OTA Update Trigger Helper
               static void runOtaUpdateScript() {
                   (void)system("/usr/local/bin/update_check.sh &");
               }
               """
               
-              # Insert cleanly after the existing #include block to prevent scope issues
-              include_matches = list(re.finditer(r'#include\s+<[^>]+>', s_content))
+              include_matches = list(re.finditer(r'#include\s+<[^>]+>', t_content))
               if include_matches:
-                  last_include_end = include_matches[-1].end()
-                  s_content = s_content[:last_include_end] + "\n" + ota_hook + s_content[last_include_end:]
+                  last_idx = include_matches[-1].end()
+                  t_content = t_content[:last_idx] + "\n" + ota_hook + t_content[last_idx:]
               else:
-                  s_content = ota_hook + "\n" + s_content
-              
-              with open(settings_file, "w", encoding="utf-8") as f:
-                  f.write(s_content)
-              print(f"[+] Patched settings file successfully: {settings_file}")
+                  t_content = ota_hook + "\n" + t_content
 
-          print("=== STEP 2: Injecting Smart MCU Thread Guard & New Effects ===")
-          main_files = glob.glob("es-source/**/main.cpp", recursive=True)
-          if main_files:
-              with open(main_files[0], "r", encoding="utf-8", errors="ignore") as f:
+              # Auto-inject option strings if a list or combo box format is found in source
+              new_modes_string = '"rainbow_wave", "strobe_party", "color_fade", "battery_status"'
+              if "static" in t_content.lower() and new_modes_string not in t_content:
+                  # Append options to array lists if present
+                  t_content = t_content.replace('"static"', '"static", ' + new_modes_string)
+                  print("[+] Injected custom mode strings directly into UI settings options pool.")
+
+              with open(target_cpp, "w", encoding="utf-8") as f:
+                  f.write(t_content)
+              print(f"[+] Successfully patched target file: {target_cpp}")
+
+          print("=== STEP 2: Injecting Background MCU Thread Guard into main.cpp ===")
+          if main_cpp:
+              with open(main_cpp, "r", encoding="utf-8", errors="ignore") as f:
                   main_content = f.read()
 
               thread_code = """
@@ -93,6 +115,8 @@ jobs:
                       if (Settings::getInstance() != nullptr) {
                           std::string mode = Settings::getInstance()->getString("JoystickLEDMode");
                           
+                          // Custom modes handler. Stock static colors, breathing, and native rainbow flow 
+                          // are completely ignored here so ArkOS manages them natively.
                           if (mode == "battery_status") {
                               std::ifstream bat("/sys/class/power_supply/battery/capacity");
                               int cap = 100;
@@ -133,6 +157,7 @@ jobs:
                               std::this_thread::sleep_for(std::chrono::milliseconds(250));
                           }
                           else {
+                              // Let stock ArkOS handle all static colors, breathing effects, and native rainbow flows natively.
                               std::this_thread::sleep_for(std::chrono::seconds(2));
                           }
                       } else {
@@ -145,9 +170,9 @@ jobs:
               main_content = thread_code + "\n" + main_content
               main_content = re.sub(r'(int\s+main\s*\([^\)]*\)\s*\{)', r'\1\n    std::thread mcuThread(CustomMCUThread);\n    mcuThread.detach();\n', main_content, count=1)
 
-              with open(main_files[0], "w", encoding="utf-8") as f:
+              with open(main_cpp, "w", encoding="utf-8") as f:
                   f.write(main_content)
-              print("[+] Successfully injected smart background thread into main.cpp")
+              print(f"[+] Successfully injected thread into main file: {main_cpp}")
           EOF
 
       - name: Build EmulationStation Binary
