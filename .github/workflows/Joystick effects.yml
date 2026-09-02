@@ -39,13 +39,12 @@ jobs:
               with open(menu_files[0], "w", encoding="utf-8") as f:
                   f.write(menu_content)
 
-          # 2. Inject OTA Update menu item into GuiArkOS4CloneSettings.cpp
+          # 2. Inject OTA Update menu item handler into GuiArkOS4CloneSettings.cpp
           settings_files = glob.glob("es-source/**/GuiArkOS4CloneSettings.cpp", recursive=True)
           if settings_files:
               with open(settings_files[0], "r", encoding="utf-8", errors="ignore") as f:
                   settings_content = f.read()
               
-              # Add OTA menu trigger action handler if a suitable insertion point exists
               ota_hook = """
               // Injected OTA Update Trigger
               void runOtaUpdateScript() {
@@ -144,7 +143,8 @@ jobs:
         run: |
           cd es-source
           mkdir build && cd build
-          cmake .. -DCMAKE_BUILD_TYPE=Release
+          # Added -Wno-error=unused-result to bypass strict GCC 13 system() return value warnings
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS="-Wno-error=unused-result"
           make -j$(nproc)
 
       - name: Verify Binary and Generate RGB Log
@@ -152,7 +152,6 @@ jobs:
           python3 - << 'EOF'
           import os, glob, sys
 
-          # Search for binary correctly in root or build subfolders
           es_binaries = glob.glob("es-source/emulationstation") or glob.glob("es-source/**/emulationstation", recursive=True)
           if not es_binaries:
               print("[!] ERROR: Compiled binary not found!")
