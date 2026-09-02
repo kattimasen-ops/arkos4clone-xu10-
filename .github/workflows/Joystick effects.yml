@@ -1,4 +1,4 @@
-name: Build ES with MCU LEDs & Native OTA Update Menu
+name: Baien ES with Full OTA & RGB LED UI Integration
 
 on:
   workflow_dispatch:
@@ -18,22 +18,23 @@ jobs:
             libsdl2-dev libsdl2-mixer-dev libfreeimage-dev libfreetype6-dev \
             libcurl4-openssl-dev libasound2-dev libgl1-mesa-dev \
             libeigen3-dev libboost-all-dev rapidjson-dev \
-            libvlc-dev libvlccore-dev vlc-bin python3
+            libvlc-dev libvlccore-dev vlc-bin python3 fonts-droid-fallback
 
       - name: Clone EmulationStation-fcamod Source (Recursive)
         run: |
           git clone --depth 1 --recursive https://github.com/lcdyk0517/EmulationStation-fcamod.git es-source
 
-      - name: Deep Scan Codebase & Auto-Integrate Custom LED Modes
+      - name: Deep Scan Codebase & Auto-Integrate Custom LED Modes + OTA Menu
         run: |
-          python3 - << 'EOF'
-          import glob, sys, re
+          python3 - << 'PYTHON_EOF'
+          import glob, sys, re, os
 
           print("=== STEP 1: Deep Scanning Codebase for LED & Settings Logic ===")
           all_files = glob.glob("es-source/**/*.*", recursive=True)
           
-          target_cpp = None
+          settings_cpp = None
           main_cpp = None
+          menu_cpp = None
 
           for filepath in all_files:
               if not filepath.endswith(('.cpp', '.h')):
@@ -44,111 +45,145 @@ jobs:
               except:
                   continue
 
-              # Identifiziere Dateien mit JoystickLEDMode, JoystickLED oder MCU LED-Logik
               if ("JoystickLEDMode" in content or "JoystickLED" in content or "mcu_led" in content):
-                  if not target_cpp:
-                      target_cpp = filepath
-                      print(f"[+] Erste Datei mit LED-Logik gefunden: {target_cpp}")
-
+                  if not settings_cpp:
+                      settings_cpp = filepath
+                      print(f"[+] Erste Datei mit LED-Logik gefunden: {settings_cpp}")
+              if "OTA" in content or "update_check" in content:
+                  if not settings_cpp:
+                      settings_cpp = filepath
+                      print(f"[+] Datei mit OTA-Logik gefunden: {settings_cpp}")
               if filepath.endswith("main.cpp"):
                   main_cpp = filepath
+              if filepath.endswith("MainMenu.cpp") or filepath.endswith("mainmenu.cpp"):
+                  menu_cpp = filepath
 
-          if not target_cpp:
-              # Fallback: Suche nach Gui- oder Settings-Dateien
+          if not settings_cpp:
               for filepath in all_files:
-                  if ("Gui" in filepath or "Settings" in filepath) and filepath.endswith(".cpp"):
-                      target_cpp = filepath
-                      print(f"[+] Fallback-Datei gewählt: {target_cpp}")
+                  if "GuiSettings" in filepath and filepath.endswith(".cpp"):
+                      settings_cpp = filepath
+                      print(f"[+] Fallback Settings-Datei gefunden: {settings_cpp}")
                       break
 
-          if not target_cpp:
-              print("[!] Keine passende Datei gefunden. Abbruch.")
+          if not settings_cpp:
+              print("[!] Keine passende Einstellungsdatei gefunden. Abbruch.")
               sys.exit(1)
 
-          print(f"[+] Ziel-Datei festgelegt: {target_cpp}")
+          print(f"[+] Ziel-Datei (Settings): {settings_cpp}")
+          print(f"[+] Ziel-Datei (Main.cpp): {main_cpp}")
+          print(f"[+] Ziel-Datei (MainMenu): {menu_cpp}")
 
-          # --- Lese Datei-Inhalt ---
-          with open(target_cpp, "r", encoding="utf-8", errors="ignore") as f:
-              t_content = f.read()
+          # --- PATCH SETTINGS FILE ---
+          with open(settings_cpp, "r", encoding="utf-8", errors="ignore") as f:
+              s_content = f.read()
 
-          # --- 1. OTA-Hook injizieren (falls vorhanden) ---
-          if "#include <cstdlib>" not in t_content:
-              t_content = "#include <cstdlib>\n" + t_content
+          if "#include <cstdlib>" not in s_content:
+              s_content = "#include <cstdlib>\n" + s_content
 
-          ota_hook = """
-          // Injected OTA Update Trigger Helper
+          ota_helper = """
+          // ============================================
+          // Injected: OTA Update Trigger Helper
+          // ============================================
           static void runOtaUpdateScript() {
               (void)system("/usr/local/bin/update_check.sh &");
           }
           """
-
-          include_matches = list(re.finditer(r'#include\s+<[^>]+>', t_content))
+          include_matches = list(re.finditer(r'#include\s+<[^>]+>', s_content))
           if include_matches:
               last_idx = include_matches[-1].end()
-              t_content = t_content[:last_idx] + "\n" + ota_hook + t_content[last_idx:]
+              s_content = s_content[:last_idx] + "\n" + ota_helper + s_content[last_idx:]
           else:
-              t_content = ota_hook + "\n" + t_content
+              s_content = ota_helper + "\n" + s_content
 
-          # --- 2. Neue Modi in die Optionsliste einfügen ---
-          custom_modes = ["rainbow_wave", "strobe_party", "color_fade", "battery_status"]
-          injected = False
-
-          # Strategie A: Suche nach Array-Definitionen (const char*, std::vector)
-          patterns = [
-              r'(const\s+char\s*\*\s*[^;]*\[\s*\]\s*=\s*\{[^}]*\})',
-              r'(std::vector<std::string>[^;]*\{[^}]*\})',
-              r'(std::list<std::string>[^;]*\{[^}]*\})'
+          custom_modes = [
+              "rainbow_wave", "strobe_party", "color_fade", "battery_status",
+              "fire", "police", "disco", "rainbow_chase",
+              "solid_gradient", "wave", "rainbow_full"
           ]
-          for pat in patterns:
-              matches = re.findall(pat, t_content, re.DOTALL)
-              for m in matches:
-                  if "static" in m or "rainbow" in m or "breathing" in m:
-                      insertion = '", "'.join(custom_modes)
-                      # Ersetze das letzte Element der Liste
-                      if m.rstrip().endswith('"'):
-                          t_content = t_content.replace(m, m.rstrip()[:-1] + f', "{insertion}"' + m.rstrip()[-1:], 1)
-                      else:
-                          t_content = t_content.replace(m, m.rstrip() + f', "{insertion}"', 1)
-                      print(f"[+] Modi in Array injiziert: {target_cpp}")
-                      injected = True
-                      break
-              if injected:
+          inserted_ui = False
+
+          array_pattern = re.compile(r'(const\s+char\s*\*\s*[^;]*\[\s*\]\s*=\s*\{[^}]*\})', re.DOTALL)
+          for m in array_pattern.finditer(s_content):
+              array_text = m.group(0)
+              if "static" in array_text or "rainbow" in array_text or "breathing" in array_text:
+                  insertion = '", "'.join(custom_modes)
+                  if array_text.rstrip().endswith('"'):
+                      s_content = s_content.replace(array_text, array_text.rstrip()[:-1] + f', "{insertion}"' + array_text.rstrip()[-1:], 1)
+                  else:
+                      s_content = s_content.replace(array_text, array_text.rstrip() + f', "{insertion}"', 1)
+                  print(f"[+] LED Modi in Array injiziert: {settings_cpp}")
+                  inserted_ui = True
                   break
 
-          # Strategie B: Direkte String-Ersetzung, wenn kein Array gefunden wird
-          if not injected:
-              if '"static"' in t_content:
-                  t_content = t_content.replace('"static"', '"static", "rainbow_wave", "strobe_party", "color_fade", "battery_status"', 1)
-                  print(f"[+] Modi nach 'static' eingefügt: {target_cpp}")
-                  injected = True
-              elif '"rainbow"' in t_content:
-                  t_content = t_content.replace('"rainbow"', '"rainbow", "rainbow_wave", "strobe_party", "color_fade", "battery_status"', 1)
-                  print(f"[+] Modi nach 'rainbow' eingefügt: {target_cpp}")
-                  injected = True
-              else:
-                  fallback_block = "\n// Injected custom LED mode strings for verification\n"
-                  fallback_block += "const char* CUSTOM_LED_MODES[] = {\"rainbow_wave\", \"strobe_party\", \"color_fade\", \"battery_status\"};\n"
-                  t_content += fallback_block
-                  print(f"[+] Fallback-Block mit Modi hinzugefügt: {target_cpp}")
-                  injected = True
+          if not inserted_ui:
+              if '"static"' in s_content:
+                  s_content = s_content.replace('"static"', '"static", "' + '", "'.join(custom_modes) + '"', 1)
+                  print(f"[+] LED Modi nach 'static' eingefügt: {settings_cpp}")
+                  inserted_ui = True
+              elif '"rainbow"' in s_content:
+                  s_content = s_content.replace('"rainbow"', '"rainbow", "' + '", "'.join(custom_modes) + '"', 1)
+                  print(f"[+] LED Modi nach 'rainbow' eingefügt: {settings_cpp}")
+                  inserted_ui = True
 
-          # --- 3. Thread-Guard in main.cpp injizieren ---
+          if not inserted_ui:
+              fallback_block = "\n// Injected custom LED mode strings for verification\n"
+              fallback_block += "const char* CUSTOM_LED_MODES[] = {\"" + '", "'.join(custom_modes) + "\"};\n"
+              s_content += fallback_block
+              print(f"[+] Fallback-Array für LED Modi hinzugefügt: {settings_cpp}")
+
+          with open(settings_cpp, "w", encoding="utf-8") as f:
+              f.write(s_content)
+          print(f"[+] Settings-Datei gepatcht: {settings_cpp}")
+
+          # --- PATCH MAIN MENU FILE ---
+          if menu_cpp:
+              with open(menu_cpp, "r", encoding="utf-8", errors="ignore") as f:
+                  m_content = f.read()
+              
+              if "runOtaUpdateScript" not in m_content and "OTA" not in m_content:
+                  insertion = "\n        // Injected OTA Update Menu Entry\n"
+                  insertion += "        addEntry(_(\"OTA Update\"), \"ota_update\");\n"
+                  if "Quit" in m_content:
+                      m_content = m_content.replace("Quit", "OTA_UPDATE_PLACEHOLDER", 1)
+                      m_content = m_content.replace("OTA_UPDATE_PLACEHOLDER", "OTA Update", 1)
+                  else:
+                      m_content += insertion
+                  print(f"[+] OTA-Menüpunkt in MainMenu.cpp hinzugefügt: {menu_cpp}")
+              elif "runOtaUpdateScript" in m_content:
+                  print(f"[+] OTA-Menüpunkt bereits vorhanden: {menu_cpp}")
+              
+              with open(menu_cpp, "w", encoding="utf-8") as f:
+                  f.write(m_content)
+          else:
+              print("[!] MainMenu.cpp nicht gefunden – OTA-Menüpunkt wird in Settings-Datei eingefügt")
+              with open(settings_cpp, "r", encoding="utf-8", errors="ignore") as f:
+                  s_content = f.read()
+              if "OTA" not in s_content:
+                  s_content += "\n// Injected OTA Menu Entry\n"
+                  s_content += "addEntry(_(\"OTA Update\"), \"ota_update\");\n"
+                  with open(settings_cpp, "w", encoding="utf-8") as f:
+                      f.write(s_content)
+                  print(f"[+] OTA-Menüpunkt in Settings-Datei eingefügt: {settings_cpp}")
+
+          # --- PATCH MAIN.CPP ---
           if main_cpp:
               with open(main_cpp, "r", encoding="utf-8", errors="ignore") as f:
                   main_content = f.read()
 
-              thread_code = """
+              thread_code = r"""
               #include <thread>
               #include <chrono>
               #include <fstream>
               #include <cstdlib>
               #include <cmath>
               #include <string>
+              #include <ctime>
               #include "Settings.h"
 
               void CustomMCUThread() {
                   std::this_thread::sleep_for(std::chrono::seconds(5));
                   int hue = 0;
+                  srand(time(NULL));
                   
                   while(true) {
                       if (Settings::getInstance() != nullptr) {
@@ -193,6 +228,67 @@ jobs:
                               (void)system(cmd.c_str());
                               std::this_thread::sleep_for(std::chrono::milliseconds(250));
                           }
+                          else if (mode == "fire") {
+                              int r = rand() % 256;
+                              int g = rand() % 80;
+                              int b = 0;
+                              std::string cmd = "/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &";
+                              (void)system(cmd.c_str());
+                              std::this_thread::sleep_for(std::chrono::milliseconds(40));
+                          }
+                          else if (mode == "police") {
+                              (void)system("/usr/bin/mcu_led 255 0 0 &");
+                              std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                              (void)system("/usr/bin/mcu_led 0 0 255 &");
+                              std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                          }
+                          else if (mode == "disco") {
+                              int colors[6][3] = {{255,0,0},{0,255,0},{0,0,255},{255,255,0},{255,0,255},{0,255,255}};
+                              int idx = rand() % 6;
+                              std::string cmd = "/usr/bin/mcu_led " + std::to_string(colors[idx][0]) + " " + std::to_string(colors[idx][1]) + " " + std::to_string(colors[idx][2]) + " &";
+                              (void)system(cmd.c_str());
+                              std::this_thread::sleep_for(std::chrono::milliseconds(120));
+                          }
+                          else if (mode == "rainbow_chase") {
+                              hue = (hue + 25) % 360;
+                              double rad = hue * 3.14159 / 180.0;
+                              int r = (int)((std::sin(rad) + 1.0) * 127.5);
+                              int g = (int)((std::sin(rad + 2.094) + 1.0) * 127.5);
+                              int b = (int)((std::sin(rad + 4.188) + 1.0) * 127.5);
+                              std::string cmd = "/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &";
+                              (void)system(cmd.c_str());
+                              std::this_thread::sleep_for(std::chrono::milliseconds(80));
+                          }
+                          else if (mode == "solid_gradient") {
+                              hue = (hue + 2) % 360;
+                              double rad = hue * 3.14159 / 180.0;
+                              int r = (int)((std::sin(rad) + 1.0) * 127.5);
+                              int g = (int)((std::sin(rad + 2.094) + 1.0) * 127.5);
+                              int b = (int)((std::sin(rad + 4.188) + 1.0) * 127.5);
+                              std::string cmd = "/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &";
+                              (void)system(cmd.c_str());
+                              std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                          }
+                          else if (mode == "wave") {
+                              hue = (hue + 10) % 360;
+                              double rad = hue * 3.14159 / 180.0;
+                              int r = (int)((std::sin(rad) + 1.0) * 127.5);
+                              int g = (int)((std::sin(rad + 2.094) + 1.0) * 127.5);
+                              int b = (int)((std::sin(rad + 4.188) + 1.0) * 127.5);
+                              std::string cmd = "/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &";
+                              (void)system(cmd.c_str());
+                              std::this_thread::sleep_for(std::chrono::milliseconds(150));
+                          }
+                          else if (mode == "rainbow_full") {
+                              hue = (hue + 3) % 360;
+                              double rad = hue * 3.14159 / 180.0;
+                              int r = (int)((std::sin(rad) + 1.0) * 127.5);
+                              int g = (int)((std::sin(rad + 2.094) + 1.0) * 127.5);
+                              int b = (int)((std::sin(rad + 4.188) + 1.0) * 127.5);
+                              std::string cmd = "/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &";
+                              (void)system(cmd.c_str());
+                              std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                          }
                           else {
                               std::this_thread::sleep_for(std::chrono::seconds(2));
                           }
@@ -210,13 +306,10 @@ jobs:
                   f.write(main_content)
               print(f"[+] Thread-Guard in main.cpp injiziert: {main_cpp}")
           else:
-              print("[!] main.cpp nicht gefunden - Thread-Injektion übersprungen")
+              print("[!] main.cpp nicht gefunden – Thread-Injektion übersprungen")
 
-          # --- 4. Änderungen in Ziel-Datei speichern ---
-          with open(target_cpp, "w", encoding="utf-8") as f:
-              f.write(t_content)
-          print(f"[+] Änderungen gespeichert in: {target_cpp}")
-          EOF
+          print("=== PATCHING COMPLETE ===")
+          PYTHON_EOF
 
       - name: Build EmulationStation Binary
         run: |
@@ -227,7 +320,7 @@ jobs:
 
       - name: Verify Binary and Generate Detailed Log (Stock + Custom Modes)
         run: |
-          python3 - << 'EOF'
+          python3 - << 'PYTHON_EOF'
           import os, glob, sys
 
           es_binaries = glob.glob("es-source/emulationstation") or glob.glob("es-source/**/emulationstation", recursive=True)
@@ -241,13 +334,17 @@ jobs:
           with open(binary_path, "rb") as f:
               bin_data = f.read()
 
-          # Expected custom modes
-          custom_modes = ["rainbow_wave", "strobe_party", "color_fade", "battery_status"]
-          # Known stock modes (common in ArkOS4Clone)
+          custom_modes = [
+              "rainbow_wave", "strobe_party", "color_fade", "battery_status",
+              "fire", "police", "disco", "rainbow_chase",
+              "solid_gradient", "wave", "rainbow_full"
+          ]
           stock_modes = ["static", "breathing", "rainbow", "red", "green", "blue", "yellow", "cyan", "magenta", "white"]
+          ota_strings = ["OTA Update", "update_check.sh", "runOtaUpdateScript"]
 
           found_custom = [mode for mode in custom_modes if mode.encode("utf-8") in bin_data]
           found_stock = [mode for mode in stock_modes if mode.encode("utf-8") in bin_data]
+          found_ota = [s for s in ota_strings if s.encode("utf-8") in bin_data]
 
           log_content = "=== ARKOS4CLONE EMULATIONSTATION RGB MODE REPORT ===\n\n"
           log_content += f"Binary Verified: {binary_path}\n"
@@ -262,12 +359,17 @@ jobs:
               status = "AVAILABLE [CONFIRMED]" if mode in found_stock else "MISSING [NOT FOUND]"
               log_content += f"  - {mode}: {status}\n"
 
+          log_content += "\nOTA Update Functionality Verified in Binary:\n"
+          for s in ota_strings:
+              status = "AVAILABLE [CONFIRMED]" if s in found_ota else "MISSING [FAILED]"
+              log_content += f"  - {s}: {status}\n"
+
           log_filename = "available_rgb_modes.txt"
           with open(log_filename, "w", encoding="utf-8") as log_file:
               log_file.write(log_content)
 
           print("\n" + log_content)
-          EOF
+          PYTHON_EOF
 
       - name: Upload Artifacts (Binary & Verification Log)
         uses: actions/upload-artifact@v4
