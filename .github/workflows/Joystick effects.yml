@@ -29,7 +29,7 @@ jobs:
           python3 - << 'EOF'
           import glob, sys, re
 
-          print("=== STEP 1: Patching Settings & OTA Menu Hook ===")
+          print("=== STEP 1: Patching Settings & OTA Menu Hook Safely ===")
           cpp_files = glob.glob("es-source/**/*.cpp", recursive=True)
           settings_file = None
 
@@ -50,21 +50,25 @@ jobs:
               with open(settings_file, "r", encoding="utf-8", errors="ignore") as f:
                   s_content = f.read()
               
-              if "#include <cstdlib>" not in s_content:
-                  s_content = "#include <cstdlib>\n" + s_content
-
-              # Inject OTA update helper function safely
               ota_hook = """
+              #include <cstdlib>
               // Injected OTA Update Trigger Helper
               static void runOtaUpdateScript() {
                   (void)system("/usr/local/bin/update_check.sh &");
               }
               """
-              s_content = ota_hook + "\n" + s_content
+              
+              # Insert cleanly after the existing #include block to prevent scope issues
+              include_matches = list(re.finditer(r'#include\s+<[^>]+>', s_content))
+              if include_matches:
+                  last_include_end = include_matches[-1].end()
+                  s_content = s_content[:last_include_end] + "\n" + ota_hook + s_content[last_include_end:]
+              else:
+                  s_content = ota_hook + "\n" + s_content
               
               with open(settings_file, "w", encoding="utf-8") as f:
                   f.write(s_content)
-              print(f"[+] Patched settings file: {settings_file}")
+              print(f"[+] Patched settings file successfully: {settings_file}")
 
           print("=== STEP 2: Injecting Smart MCU Thread Guard & New Effects ===")
           main_files = glob.glob("es-source/**/main.cpp", recursive=True)
@@ -72,7 +76,6 @@ jobs:
               with open(main_files[0], "r", encoding="utf-8", errors="ignore") as f:
                   main_content = f.read()
 
-              # Smart thread: only triggers on our custom modes. All native static/breathing/rainbow modes are left alone.
               thread_code = """
               #include <thread>
               #include <chrono>
@@ -90,8 +93,6 @@ jobs:
                       if (Settings::getInstance() != nullptr) {
                           std::string mode = Settings::getInstance()->getString("JoystickLEDMode");
                           
-                          // ONLY run custom animations if our specific new modes are selected.
-                          // This leaves ALL native static colors, breathing modes, and native rainbow flow 100% untouched and handled by ArkOS.
                           if (mode == "battery_status") {
                               std::ifstream bat("/sys/class/power_supply/battery/capacity");
                               int cap = 100;
@@ -132,7 +133,6 @@ jobs:
                               std::this_thread::sleep_for(std::chrono::milliseconds(250));
                           }
                           else {
-                              // Native modes active: sleep and let ArkOS handle static colors, breathing, and native rainbow flow.
                               std::this_thread::sleep_for(std::chrono::seconds(2));
                           }
                       } else {
