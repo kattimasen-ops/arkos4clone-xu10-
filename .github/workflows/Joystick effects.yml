@@ -39,14 +39,15 @@ jobs:
               with open(menu_files[0], "w", encoding="utf-8") as f:
                   f.write(menu_content)
 
-          # 2. Inject OTA Update menu item handler into GuiArkOS4CloneSettings.cpp with (void) casting
+          # 2. Inject OTA Update menu item handler into GuiArkOS4CloneSettings.cpp with #include <cstdlib>
           settings_files = glob.glob("es-source/**/GuiArkOS4CloneSettings.cpp", recursive=True)
           if settings_files:
               with open(settings_files[0], "r", encoding="utf-8", errors="ignore") as f:
                   settings_content = f.read()
               
-              # Use valid function scope and cast system() to void to prevent warn_unused_result errors
+              # Added #include <cstdlib> so system() is properly declared in scope
               ota_hook = """
+              #include <cstdlib>
               // Injected OTA Update Trigger Helper
               static void runOtaUpdateScript() {
                   (void)system("/usr/local/bin/update_check.sh &");
@@ -55,7 +56,7 @@ jobs:
               settings_content = ota_hook + "\n" + settings_content
               with open(settings_files[0], "w", encoding="utf-8") as f:
                   f.write(settings_content)
-              print("[+] Successfully injected safe OTA update hook into GuiArkOS4CloneSettings.cpp")
+              print("[+] Successfully injected OTA update hook and header into GuiArkOS4CloneSettings.cpp")
 
           # 3. Inject multi-mode MCU RGB daemon into main.cpp with safe (void) system calls
           main_files = glob.glob("es-source/**/main.cpp", recursive=True)
