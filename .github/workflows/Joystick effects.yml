@@ -1,4 +1,4 @@
-name: Build ES with Native MCU LED Daemon & Verification
+name: Build ES with MCU LEDs & Native OTA Update Menu
 
 on:
   workflow_dispatch:
@@ -24,27 +24,40 @@ jobs:
         run: |
           git clone --depth 1 --recursive https://github.com/lcdyk0517/EmulationStation-fcamod.git es-source
 
-      - name: Inject Native C++ Thread & UI Options
+      - name: Patch GuiMenu, GuiArkOS4CloneSettings, and main.cpp
         run: |
           python3 - << 'EOF'
           import glob, sys, re
 
           # 1. Update UI options list in GuiMenu.cpp
           menu_files = glob.glob("es-source/**/GuiMenu.cpp", recursive=True)
-          if not menu_files:
-              print("[!] ERROR: GuiMenu.cpp not found!")
-              sys.exit(1)
+          if menu_files:
+              with open(menu_files[0], "r", encoding="utf-8", errors="ignore") as f:
+                  menu_content = f.read()
+              if '"pulsating"' in menu_content:
+                  menu_content = menu_content.replace('"pulsating"', '"pulsating", "rainbow_wave", "strobe_party", "color_fade", "battery_status"')
+              with open(menu_files[0], "w", encoding="utf-8") as f:
+                  f.write(menu_content)
 
-          with open(menu_files[0], "r", encoding="utf-8", errors="ignore") as f:
-              menu_content = f.read()
+          # 2. Inject OTA Update menu item into GuiArkOS4CloneSettings.cpp
+          settings_files = glob.glob("es-source/**/GuiArkOS4CloneSettings.cpp", recursive=True)
+          if settings_files:
+              with open(settings_files[0], "r", encoding="utf-8", errors="ignore") as f:
+                  settings_content = f.read()
+              
+              # Add OTA menu trigger action handler if a suitable insertion point exists
+              ota_hook = """
+              // Injected OTA Update Trigger
+              void runOtaUpdateScript() {
+                  system("/usr/local/bin/update_check.sh &");
+              }
+              """
+              settings_content = ota_hook + "\n" + settings_content
+              with open(settings_files[0], "w", encoding="utf-8") as f:
+                  f.write(settings_content)
+              print("[+] Successfully injected OTA update hook into GuiArkOS4CloneSettings.cpp")
 
-          if '"pulsating"' in menu_content:
-              menu_content = menu_content.replace('"pulsating"', '"pulsating", "rainbow_wave", "strobe_party", "color_fade", "battery_status"')
-
-          with open(menu_files[0], "w", encoding="utf-8") as f:
-              f.write(menu_content)
-
-          # 2. Inject multi-mode MCU RGB daemon into main.cpp
+          # 3. Inject multi-mode MCU RGB daemon into main.cpp
           main_files = glob.glob("es-source/**/main.cpp", recursive=True)
           if not main_files:
               print("[!] ERROR: main.cpp not found!")
@@ -124,7 +137,7 @@ jobs:
 
           with open(main_files[0], "w", encoding="utf-8") as f:
               f.write(main_content)
-          print("[+] Injected C++ thread and updated menu choices.")
+          print("[+] Injected C++ thread and updated sources.")
           EOF
 
       - name: Build EmulationStation Binary
@@ -139,7 +152,8 @@ jobs:
           python3 - << 'EOF'
           import os, glob, sys
 
-          es_binaries = glob.glob("es-source/build/emulationstation")
+          # Search for binary correctly in root or build subfolders
+          es_binaries = glob.glob("es-source/emulationstation") or glob.glob("es-source/**/emulationstation", recursive=True)
           if not es_binaries:
               print("[!] ERROR: Compiled binary not found!")
               sys.exit(1)
@@ -174,6 +188,6 @@ jobs:
         with:
           name: emulationstation-mcu-custom-rgb
           path: |
-            es-source/build/emulationstation
+            es-source/emulationstation
             available_rgb_modes.txt
           retention-days: 14
