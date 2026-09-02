@@ -24,7 +24,7 @@ jobs:
         run: |
           git clone --depth 1 --recursive https://github.com/lcdyk0517/EmulationStation-fcamod.git es-source
 
-      - name: Patch GuiMenu, GuiArkOS4CloneSettings, and main.cpp
+      - name: Patch GuiMenu, GuiArkOS4CloneSettings, and main.cpp Safely
         run: |
           python3 - << 'EOF'
           import glob, sys, re
@@ -39,24 +39,25 @@ jobs:
               with open(menu_files[0], "w", encoding="utf-8") as f:
                   f.write(menu_content)
 
-          # 2. Inject OTA Update menu item handler into GuiArkOS4CloneSettings.cpp
+          # 2. Inject OTA Update menu item handler into GuiArkOS4CloneSettings.cpp with (void) casting
           settings_files = glob.glob("es-source/**/GuiArkOS4CloneSettings.cpp", recursive=True)
           if settings_files:
               with open(settings_files[0], "r", encoding="utf-8", errors="ignore") as f:
                   settings_content = f.read()
               
+              # Use valid function scope and cast system() to void to prevent warn_unused_result errors
               ota_hook = """
-              // Injected OTA Update Trigger
-              void runOtaUpdateScript() {
-                  system("/usr/local/bin/update_check.sh &");
+              // Injected OTA Update Trigger Helper
+              static void runOtaUpdateScript() {
+                  (void)system("/usr/local/bin/update_check.sh &");
               }
               """
               settings_content = ota_hook + "\n" + settings_content
               with open(settings_files[0], "w", encoding="utf-8") as f:
                   f.write(settings_content)
-              print("[+] Successfully injected OTA update hook into GuiArkOS4CloneSettings.cpp")
+              print("[+] Successfully injected safe OTA update hook into GuiArkOS4CloneSettings.cpp")
 
-          # 3. Inject multi-mode MCU RGB daemon into main.cpp
+          # 3. Inject multi-mode MCU RGB daemon into main.cpp with safe (void) system calls
           main_files = glob.glob("es-source/**/main.cpp", recursive=True)
           if not main_files:
               print("[!] ERROR: main.cpp not found!")
@@ -87,9 +88,9 @@ jobs:
                           int cap = 100;
                           if (bat.is_open()) { bat >> cap; bat.close(); }
                           
-                          if (cap >= 60) system("/usr/bin/mcu_led 0 255 0 &");
-                          else if (cap >= 25) system("/usr/bin/mcu_led 255 150 0 &");
-                          else system("/usr/bin/mcu_led 255 0 0 &");
+                          if (cap >= 60) (void)system("/usr/bin/mcu_led 0 255 0 &");
+                          else if (cap >= 25) (void)system("/usr/bin/mcu_led 255 150 0 &");
+                          else (void)system("/usr/bin/mcu_led 255 0 0 &");
                           
                           std::this_thread::sleep_for(std::chrono::seconds(5));
                       }
@@ -100,15 +101,15 @@ jobs:
                           int g = (int)((std::sin(rad + 2.094) + 1.0) * 127.5);
                           int b = (int)((std::sin(rad + 4.188) + 1.0) * 127.5);
                           std::string cmd = "/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &";
-                          system(cmd.c_str());
+                          (void)system(cmd.c_str());
                           std::this_thread::sleep_for(std::chrono::milliseconds(100));
                       }
                       else if (mode == "strobe_party") {
-                          system("/usr/bin/mcu_led 255 0 0 &");
+                          (void)system("/usr/bin/mcu_led 255 0 0 &");
                           std::this_thread::sleep_for(std::chrono::milliseconds(120));
-                          system("/usr/bin/mcu_led 0 255 0 &");
+                          (void)system("/usr/bin/mcu_led 0 255 0 &");
                           std::this_thread::sleep_for(std::chrono::milliseconds(120));
-                          system("/usr/bin/mcu_led 0 0 255 &");
+                          (void)system("/usr/bin/mcu_led 0 0 255 &");
                           std::this_thread::sleep_for(std::chrono::milliseconds(120));
                       }
                       else if (mode == "color_fade") {
@@ -118,7 +119,7 @@ jobs:
                           int g = (int)((std::sin(rad + 2.094) + 1.0) * 127.5);
                           int b = (int)((std::sin(rad + 4.188) + 1.0) * 127.5);
                           std::string cmd = "/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &";
-                          system(cmd.c_str());
+                          (void)system(cmd.c_str());
                           std::this_thread::sleep_for(std::chrono::milliseconds(250));
                       }
                       else {
@@ -136,14 +137,13 @@ jobs:
 
           with open(main_files[0], "w", encoding="utf-8") as f:
               f.write(main_content)
-          print("[+] Injected C++ thread and updated sources.")
+          print("[+] Injected safe C++ thread and updated sources.")
           EOF
 
       - name: Build EmulationStation Binary
         run: |
           cd es-source
           mkdir build && cd build
-          # Added -Wno-error=unused-result to bypass strict GCC 13 system() return value warnings
           cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS="-Wno-error=unused-result"
           make -j$(nproc)
 
