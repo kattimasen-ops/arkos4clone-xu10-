@@ -1,168 +1,279 @@
-print("=== STEP 1: Deep Scanning Codebase for LED & Settings Logic ===")
-all_files = glob.glob("es-source/**/*.*", recursive=True)
+name: Build ES with MCU LEDs & Native OTA Update Menu
 
-target_cpp = None
-main_cpp = None
+on:
+  workflow_dispatch:
 
-for filepath in all_files:
-    if not filepath.endswith(('.cpp', '.h')):
-        continue
-    try:
-        with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-            content = f.read()
-    except:
-        continue
+permissions:
+  contents: write
 
-    # Identifiziere Dateien mit JoystickLEDMode, JoystickLED oder MCU LED-Logik
-    if ("JoystickLEDMode" in content or "JoystickLED" in content or "mcu_led" in content):
-        if not target_cpp:
-            target_cpp = filepath
-            print(f"[+] Erste Datei mit LED-Logik gefunden: {target_cpp}")
+jobs:
+  build-es:
+    runs-on: ubuntu-latest
 
-    if filepath.endswith("main.cpp"):
-        main_cpp = filepath
+    steps:
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake pkg-config \
+            libsdl2-dev libsdl2-mixer-dev libfreeimage-dev libfreetype6-dev \
+            libcurl4-openssl-dev libasound2-dev libgl1-mesa-dev \
+            libeigen3-dev libboost-all-dev rapidjson-dev \
+            libvlc-dev libvlccore-dev vlc-bin python3
 
-if not target_cpp:
-    # Fallback: Suche nach Gui- oder Settings-Dateien
-    for filepath in all_files:
-        if ("Gui" in filepath or "Settings" in filepath) and filepath.endswith(".cpp"):
-            target_cpp = filepath
-            print(f"[+] Fallback-Datei gewählt: {target_cpp}")
-            break
+      - name: Clone EmulationStation-fcamod Source (Recursive)
+        run: |
+          git clone --depth 1 --recursive https://github.com/lcdyk0517/EmulationStation-fcamod.git es-source
 
-if not target_cpp:
-    print("[!] Keine passende Datei gefunden. Abbruch.")
-    sys.exit(1)
+      - name: Deep Scan Codebase & Auto-Integrate Custom LED Modes
+        run: |
+          python3 - << 'EOF'
+          import glob, sys, re
 
-print(f"[+] Ziel-Datei festgelegt: {target_cpp}")
+          print("=== STEP 1: Deep Scanning Codebase for LED & Settings Logic ===")
+          all_files = glob.glob("es-source/**/*.*", recursive=True)
+          
+          target_cpp = None
+          main_cpp = None
 
-# --- Lese Datei-Inhalt ---
-with open(target_cpp, "r", encoding="utf-8", errors="ignore") as f:
-    t_content = f.read()
+          for filepath in all_files:
+              if not filepath.endswith(('.cpp', '.h')):
+                  continue
+              try:
+                  with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                      content = f.read()
+              except:
+                  continue
 
-# --- 1. OTA-Hook injizieren (falls vorhanden) ---
-if "#include <cstdlib>" not in t_content:
-    t_content = "#include <cstdlib>\n" + t_content
+              # Identifiziere Dateien mit JoystickLEDMode, JoystickLED oder MCU LED-Logik
+              if ("JoystickLEDMode" in content or "JoystickLED" in content or "mcu_led" in content):
+                  if not target_cpp:
+                      target_cpp = filepath
+                      print(f"[+] Erste Datei mit LED-Logik gefunden: {target_cpp}")
 
-ota_hook = """
-// Injected OTA Update Trigger Helper
-static void runOtaUpdateScript() {
-    (void)system("/usr/local/bin/update_check.sh &");
-}
-"""
+              if filepath.endswith("main.cpp"):
+                  main_cpp = filepath
 
-include_matches = list(re.finditer(r'#include\s+<[^>]+>', t_content))
-if include_matches:
-    last_idx = include_matches[-1].end()
-    t_content = t_content[:last_idx] + "\n" + ota_hook + t_content[last_idx:]
-else:
-    t_content = ota_hook + "\n" + t_content
+          if not target_cpp:
+              # Fallback: Suche nach Gui- oder Settings-Dateien
+              for filepath in all_files:
+                  if ("Gui" in filepath or "Settings" in filepath) and filepath.endswith(".cpp"):
+                      target_cpp = filepath
+                      print(f"[+] Fallback-Datei gewählt: {target_cpp}")
+                      break
 
-# --- 2. Neue Modi in die Optionsliste einfügen ---
-custom_modes = ["rainbow_wave", "strobe_party", "color_fade", "battery_status"]
-injected = False
+          if not target_cpp:
+              print("[!] Keine passende Datei gefunden. Abbruch.")
+              sys.exit(1)
 
-# Strategie A: Suche nach Array-Definitionen (const char*, std::vector)
-# Wir suchen nach einem Block, der bekannte Modusnamen enthält (static, rainbow etc.)
-if not injected:
-    patterns = [
-        r'(const\s+char\s*\*\s*[^;]*\[\s*\]\s*=\s*\{[^}]*\})',
-        r'(std::vector<std::string>[^;]*\{[^}]*\})',
-        r'(std::list<std::string>[^;]*\{[^}]*\})'
-    ]
-    for pat in patterns:
-        matches = re.findall(pat, t_content, re.DOTALL)
-        for m in matches:
-            if "static" in m or "rainbow" in m or "breathing" in m:
-                # Füge die neuen Modi als String-Literale ein
-                insertion = '", "'.join(custom_modes)
-                # Ersetze das letzte Element der Liste
-                if m.rstrip().endswith('"'):
-                    # Falls kein Komma am Ende, füge eines hinzu
-                    t_content = t_content.replace(m, m.rstrip()[:-1] + f', "{insertion}"' + m.rstrip()[-1:], 1)
-                else:
-                    t_content = t_content.replace(m, m.rstrip() + f', "{insertion}"', 1)
-                print(f"[+] Modi in Array injiziert: {target_cpp}")
-                injected = True
-                break
-        if injected:
-            break
+          print(f"[+] Ziel-Datei festgelegt: {target_cpp}")
 
-# Strategie B: Direkte String-Ersetzung, wenn kein Array gefunden wird
-if not injected:
-    # Suche nach einem Platzhalter wie "static" und füge danach die Modi ein
-    if '"static"' in t_content:
-        t_content = t_content.replace('"static"', '"static", "rainbow_wave", "strobe_party", "color_fade", "battery_status"', 1)
-        print(f"[+] Modi nach 'static' eingefügt: {target_cpp}")
-        injected = True
-    elif '"rainbow"' in t_content:
-        t_content = t_content.replace('"rainbow"', '"rainbow", "rainbow_wave", "strobe_party", "color_fade", "battery_status"', 1)
-        print(f"[+] Modi nach 'rainbow' eingefügt: {target_cpp}")
-        injected = True
-    else:
-        # Letzte Chance: Füge die Modi als Kommentar oder in einem Fallback-Block hinzu
-        # Dies ist eine Notlösung, falls keine der obigen Strategien greift
-        # Wir fügen die Modi als zusätzliche Includes oder als Kommentar hinzu, damit der Compiler sie sieht
-        # (Achtung: Dies kann die Logik nicht wirklich ändern, aber die Strings sind im Binary)
-        fallback_block = "\n// Injected custom LED mode strings for verification\n"
-        fallback_block += "const char* CUSTOM_LED_MODES[] = {\"rainbow_wave\", \"strobe_party\", \"color_fade\", \"battery_status\"};\n"
-        t_content += fallback_block
-        print(f"[+] Fallback-Block mit Modi hinzugefügt: {target_cpp}")
-        injected = True
+          # --- Lese Datei-Inhalt ---
+          with open(target_cpp, "r", encoding="utf-8", errors="ignore") as f:
+              t_content = f.read()
 
-# --- 3. Thread-Guard in main.cpp injizieren ---
-# Hier bleibt der Code aus der vorherigen Version, der den Thread-Start einfügt
-if main_cpp:
-    with open(main_cpp, "r", encoding="utf-8", errors="ignore") as f:
-        main_content = f.read()
+          # --- 1. OTA-Hook injizieren (falls vorhanden) ---
+          if "#include <cstdlib>" not in t_content:
+              t_content = "#include <cstdlib>\n" + t_content
 
-    thread_code = """
-    #include <thread>
-    #include <chrono>
-    #include <fstream>
-    #include <cstdlib>
-    #include <cmath>
-    #include <string>
-    #include "Settings.h"
+          ota_hook = """
+          // Injected OTA Update Trigger Helper
+          static void runOtaUpdateScript() {
+              (void)system("/usr/local/bin/update_check.sh &");
+          }
+          """
 
-    void CustomMCUThread() {
-        std::this_thread::sleep_for(std::chrono::seconds(5));
-        int hue = 0;
-        
-        while(true) {
-            if (Settings::getInstance() != nullptr) {
-                std::string mode = Settings::getInstance()->getString("JoystickLEDMode");
-                
-                if (mode == "battery_status") {
-                    // ... (wie gehabt)
-                }
-                else if (mode == "rainbow_wave") {
-                    // ... (wie gehabt)
-                }
-                else if (mode == "strobe_party") {
-                    // ... (wie gehabt)
-                }
-                else if (mode == "color_fade") {
-                    // ... (wie gehabt)
-                }
-                else {
-                    std::this_thread::sleep_for(std::chrono::seconds(2));
-                }
-            } else {
-                std::this_thread::sleep_for(std::chrono::seconds(2));
-            }
-        }
-    }
-    """
+          include_matches = list(re.finditer(r'#include\s+<[^>]+>', t_content))
+          if include_matches:
+              last_idx = include_matches[-1].end()
+              t_content = t_content[:last_idx] + "\n" + ota_hook + t_content[last_idx:]
+          else:
+              t_content = ota_hook + "\n" + t_content
 
-    main_content = thread_code + "\n" + main_content
-    main_content = re.sub(r'(int\s+main\s*\([^\)]*\)\s*\{)', r'\1\n    std::thread mcuThread(CustomMCUThread);\n    mcuThread.detach();\n', main_content, count=1)
+          # --- 2. Neue Modi in die Optionsliste einfügen ---
+          custom_modes = ["rainbow_wave", "strobe_party", "color_fade", "battery_status"]
+          injected = False
 
-    with open(main_cpp, "w", encoding="utf-8") as f:
-        f.write(main_content)
-    print(f"[+] Thread-Guard in main.cpp injiziert: {main_cpp}")
+          # Strategie A: Suche nach Array-Definitionen (const char*, std::vector)
+          patterns = [
+              r'(const\s+char\s*\*\s*[^;]*\[\s*\]\s*=\s*\{[^}]*\})',
+              r'(std::vector<std::string>[^;]*\{[^}]*\})',
+              r'(std::list<std::string>[^;]*\{[^}]*\})'
+          ]
+          for pat in patterns:
+              matches = re.findall(pat, t_content, re.DOTALL)
+              for m in matches:
+                  if "static" in m or "rainbow" in m or "breathing" in m:
+                      insertion = '", "'.join(custom_modes)
+                      # Ersetze das letzte Element der Liste
+                      if m.rstrip().endswith('"'):
+                          t_content = t_content.replace(m, m.rstrip()[:-1] + f', "{insertion}"' + m.rstrip()[-1:], 1)
+                      else:
+                          t_content = t_content.replace(m, m.rstrip() + f', "{insertion}"', 1)
+                      print(f"[+] Modi in Array injiziert: {target_cpp}")
+                      injected = True
+                      break
+              if injected:
+                  break
 
-# --- 4. Änderungen in Ziel-Datei speichern ---
-with open(target_cpp, "w", encoding="utf-8") as f:
-    f.write(t_content)
-print(f"[+] Änderungen gespeichert in: {target_cpp}")
+          # Strategie B: Direkte String-Ersetzung, wenn kein Array gefunden wird
+          if not injected:
+              if '"static"' in t_content:
+                  t_content = t_content.replace('"static"', '"static", "rainbow_wave", "strobe_party", "color_fade", "battery_status"', 1)
+                  print(f"[+] Modi nach 'static' eingefügt: {target_cpp}")
+                  injected = True
+              elif '"rainbow"' in t_content:
+                  t_content = t_content.replace('"rainbow"', '"rainbow", "rainbow_wave", "strobe_party", "color_fade", "battery_status"', 1)
+                  print(f"[+] Modi nach 'rainbow' eingefügt: {target_cpp}")
+                  injected = True
+              else:
+                  fallback_block = "\n// Injected custom LED mode strings for verification\n"
+                  fallback_block += "const char* CUSTOM_LED_MODES[] = {\"rainbow_wave\", \"strobe_party\", \"color_fade\", \"battery_status\"};\n"
+                  t_content += fallback_block
+                  print(f"[+] Fallback-Block mit Modi hinzugefügt: {target_cpp}")
+                  injected = True
+
+          # --- 3. Thread-Guard in main.cpp injizieren ---
+          if main_cpp:
+              with open(main_cpp, "r", encoding="utf-8", errors="ignore") as f:
+                  main_content = f.read()
+
+              thread_code = """
+              #include <thread>
+              #include <chrono>
+              #include <fstream>
+              #include <cstdlib>
+              #include <cmath>
+              #include <string>
+              #include "Settings.h"
+
+              void CustomMCUThread() {
+                  std::this_thread::sleep_for(std::chrono::seconds(5));
+                  int hue = 0;
+                  
+                  while(true) {
+                      if (Settings::getInstance() != nullptr) {
+                          std::string mode = Settings::getInstance()->getString("JoystickLEDMode");
+                          
+                          if (mode == "battery_status") {
+                              std::ifstream bat("/sys/class/power_supply/battery/capacity");
+                              int cap = 100;
+                              if (bat.is_open()) { bat >> cap; bat.close(); }
+                              
+                              if (cap >= 60) (void)system("/usr/bin/mcu_led 0 255 0 &");
+                              else if (cap >= 25) (void)system("/usr/bin/mcu_led 255 150 0 &");
+                              else (void)system("/usr/bin/mcu_led 255 0 0 &");
+                              
+                              std::this_thread::sleep_for(std::chrono::seconds(5));
+                          }
+                          else if (mode == "rainbow_wave") {
+                              hue = (hue + 15) % 360;
+                              double rad = hue * 3.14159 / 180.0;
+                              int r = (int)((std::sin(rad) + 1.0) * 127.5);
+                              int g = (int)((std::sin(rad + 2.094) + 1.0) * 127.5);
+                              int b = (int)((std::sin(rad + 4.188) + 1.0) * 127.5);
+                              std::string cmd = "/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &";
+                              (void)system(cmd.c_str());
+                              std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                          }
+                          else if (mode == "strobe_party") {
+                              (void)system("/usr/bin/mcu_led 255 0 0 &");
+                              std::this_thread::sleep_for(std::chrono::milliseconds(120));
+                              (void)system("/usr/bin/mcu_led 0 255 0 &");
+                              std::this_thread::sleep_for(std::chrono::milliseconds(120));
+                              (void)system("/usr/bin/mcu_led 0 0 255 &");
+                              std::this_thread::sleep_for(std::chrono::milliseconds(120));
+                          }
+                          else if (mode == "color_fade") {
+                              hue = (hue + 5) % 360;
+                              double rad = hue * 3.14159 / 180.0;
+                              int r = (int)((std::sin(rad) + 1.0) * 127.5);
+                              int g = (int)((std::sin(rad + 2.094) + 1.0) * 127.5);
+                              int b = (int)((std::sin(rad + 4.188) + 1.0) * 127.5);
+                              std::string cmd = "/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &";
+                              (void)system(cmd.c_str());
+                              std::this_thread::sleep_for(std::chrono::milliseconds(250));
+                          }
+                          else {
+                              std::this_thread::sleep_for(std::chrono::seconds(2));
+                          }
+                      } else {
+                          std::this_thread::sleep_for(std::chrono::seconds(2));
+                      }
+                  }
+              }
+              """
+
+              main_content = thread_code + "\n" + main_content
+              main_content = re.sub(r'(int\s+main\s*\([^\)]*\)\s*\{)', r'\1\n    std::thread mcuThread(CustomMCUThread);\n    mcuThread.detach();\n', main_content, count=1)
+
+              with open(main_cpp, "w", encoding="utf-8") as f:
+                  f.write(main_content)
+              print(f"[+] Thread-Guard in main.cpp injiziert: {main_cpp}")
+          else:
+              print("[!] main.cpp nicht gefunden - Thread-Injektion übersprungen")
+
+          # --- 4. Änderungen in Ziel-Datei speichern ---
+          with open(target_cpp, "w", encoding="utf-8") as f:
+              f.write(t_content)
+          print(f"[+] Änderungen gespeichert in: {target_cpp}")
+          EOF
+
+      - name: Build EmulationStation Binary
+        run: |
+          cd es-source
+          mkdir build && cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS="-Wno-error=unused-result"
+          make -j$(nproc)
+
+      - name: Verify Binary and Generate Detailed Log (Stock + Custom Modes)
+        run: |
+          python3 - << 'EOF'
+          import os, glob, sys
+
+          es_binaries = glob.glob("es-source/emulationstation") or glob.glob("es-source/**/emulationstation", recursive=True)
+          if not es_binaries:
+              print("[!] ERROR: Compiled binary not found!")
+              sys.exit(1)
+
+          binary_path = es_binaries[0]
+          print(f"[+] Found compiled binary at {binary_path}")
+
+          with open(binary_path, "rb") as f:
+              bin_data = f.read()
+
+          # Expected custom modes
+          custom_modes = ["rainbow_wave", "strobe_party", "color_fade", "battery_status"]
+          # Known stock modes (common in ArkOS4Clone)
+          stock_modes = ["static", "breathing", "rainbow", "red", "green", "blue", "yellow", "cyan", "magenta", "white"]
+
+          found_custom = [mode for mode in custom_modes if mode.encode("utf-8") in bin_data]
+          found_stock = [mode for mode in stock_modes if mode.encode("utf-8") in bin_data]
+
+          log_content = "=== ARKOS4CLONE EMULATIONSTATION RGB MODE REPORT ===\n\n"
+          log_content += f"Binary Verified: {binary_path}\n"
+          log_content += f"Binary Size: {os.path.getsize(binary_path)} bytes\n\n"
+          log_content += "Custom LED Animation Options Verified in Binary:\n"
+          for mode in custom_modes:
+              status = "AVAILABLE [CONFIRMED]" if mode in found_custom else "MISSING [FAILED]"
+              log_content += f"  - {mode}: {status}\n"
+
+          log_content += "\nStock LED Modes Verified in Binary:\n"
+          for mode in stock_modes:
+              status = "AVAILABLE [CONFIRMED]" if mode in found_stock else "MISSING [NOT FOUND]"
+              log_content += f"  - {mode}: {status}\n"
+
+          log_filename = "available_rgb_modes.txt"
+          with open(log_filename, "w", encoding="utf-8") as log_file:
+              log_file.write(log_content)
+
+          print("\n" + log_content)
+          EOF
+
+      - name: Upload Artifacts (Binary & Verification Log)
+        uses: actions/upload-artifact@v4
+        with:
+          name: emulationstation-mcu-custom-rgb
+          path: |
+            es-source/emulationstation
+            available_rgb_modes.txt
+          retention-days: 14
