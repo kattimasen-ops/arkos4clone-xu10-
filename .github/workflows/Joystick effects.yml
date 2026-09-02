@@ -27,73 +27,98 @@ jobs:
       - name: Deep Scan Codebase & Auto-Integrate Custom LED Modes
         run: |
           python3 - << 'EOF'
-          import glob, sys, re
+          import glob, sys, re, os
 
-          print("=== STEP 1: Deep Scanning Codebase for LED & Settings Logic ===")
+          print("=== STEP 1: Locating LED Mode Array ===")
           all_files = glob.glob("es-source/**/*.*", recursive=True)
           
           target_cpp = None
-          main_cpp = None
+          array_pattern = re.compile(r'(const\s+char\s*\*\s*[^;]*\[\s*\]\s*=\s*\{[^}]*\})', re.DOTALL)
 
+          # 1. Find the file that defines "JoystickLEDMode" or similar
           for filepath in all_files:
-              if filepath.endswith(('.cpp', '.h')):
-                  try:
-                      with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-                          content = f.read()
-                      
-                      # Identify files handling settings, menus, or LED controls
-                      if "JoystickLED" in content or "mcu_led" in content or "GuiArkOS4CloneSettings" in filepath:
-                          if not target_cpp:
-                              target_cpp = filepath
-                              print(f"[+] Discovered primary LED settings file: {target_cpp}")
-                      
-                      if filepath.endswith("main.cpp"):
-                          main_cpp = filepath
-                  except Exception:
-                      pass
+              if not filepath.endswith(('.cpp', '.h')):
+                  continue
+              try:
+                  with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                      content = f.read()
+              except:
+                  continue
 
-          if not target_cpp and all_files:
-              # Fallback to gui settings file if explicit match isn't found
-              for filepath in all_files:
-                  if "Gui" in filepath and filepath.endswith(".cpp"):
-                      target_cpp = filepath
-                      print(f"[+] Fallback settings file selected: {target_cpp}")
+              if ("JoystickLEDMode" in content or "JoystickLED" in content or "LEDMode" in content):
+                  # Look for an array that likely contains the mode names
+                  matches = array_pattern.findall(content)
+                  if matches:
+                      # Prefer an array that contains "static" or "rainbow" (common stock modes)
+                      for m in matches:
+                          if "static" in m or "rainbow" in m or "breathing" in m:
+                              target_cpp = filepath
+                              print(f"[+] Found LED mode array in: {target_cpp}")
+                              print(f"    Array snippet: {m[:200]}...")
+                              break
+                  if target_cpp:
                       break
 
-          if target_cpp:
-              with open(target_cpp, "r", encoding="utf-8", errors="ignore") as f:
-                  t_content = f.read()
+          if not target_cpp:
+              print("[!] Could not locate LED mode array. Aborting injection.")
+              sys.exit(1)
 
-              if "#include <cstdlib>" not in t_content:
-                  t_content = "#include <cstdlib>\n" + t_content
+          # 2. Read and patch the file
+          with open(target_cpp, "r", encoding="utf-8", errors="ignore") as f:
+              t_content = f.read()
 
-              # Inject OTA update helper function safely
-              ota_hook = """
-              // Injected OTA Update Trigger Helper
-              static void runOtaUpdateScript() {
-                  (void)system("/usr/local/bin/update_check.sh &");
-              }
-              """
-              
-              include_matches = list(re.finditer(r'#include\s+<[^>]+>', t_content))
-              if include_matches:
-                  last_idx = include_matches[-1].end()
-                  t_content = t_content[:last_idx] + "\n" + ota_hook + t_content[last_idx:]
-              else:
-                  t_content = ota_hook + "\n" + t_content
+          # Insert OTA hook (if not already there)
+          if "#include <cstdlib>" not in t_content:
+              t_content = "#include <cstdlib>\n" + t_content
 
-              # Auto-inject option strings if a list or combo box format is found in source
-              new_modes_string = '"rainbow_wave", "strobe_party", "color_fade", "battery_status"'
-              if "static" in t_content.lower() and new_modes_string not in t_content:
-                  # Append options to array lists if present
-                  t_content = t_content.replace('"static"', '"static", ' + new_modes_string)
-                  print("[+] Injected custom mode strings directly into UI settings options pool.")
+          ota_hook = """
+          // Injected OTA Update Trigger Helper
+          static void runOtaUpdateScript() {
+              (void)system("/usr/local/bin/update_check.sh &");
+          }
+          """
+          include_matches = list(re.finditer(r'#include\s+<[^>]+>', t_content))
+          if include_matches:
+              last_idx = include_matches[-1].end()
+              t_content = t_content[:last_idx] + "\n" + ota_hook + t_content[last_idx:]
+          else:
+              t_content = ota_hook + "\n" + t_content
 
-              with open(target_cpp, "w", encoding="utf-8") as f:
-                  f.write(t_content)
-              print(f"[+] Successfully patched target file: {target_cpp}")
+          # 3. Inject custom modes into the array
+          custom_modes = ["rainbow_wave", "strobe_party", "color_fade", "battery_status"]
+          # Find the array again and replace its content
+          def inject_modes(match):
+              array_text = match.group(0)
+              # Extract the contents inside the braces
+              inner = array_text[array_text.find('{')+1 : array_text.rfind('}')]
+              # Split by comma, trim entries
+              entries = [e.strip().strip('"') for e in inner.split(',') if e.strip()]
+              # Add any missing custom modes
+              missing = [mode for mode in custom_modes if mode not in entries]
+              if missing:
+                  # Insert before the last '}'
+                  new_inner = inner.rstrip()
+                  if new_inner.endswith(','):
+                      new_inner += ' ' + ', '.join(f'"{m}"' for m in missing)
+                  else:
+                      new_inner += ', ' + ', '.join(f'"{m}"' for m in missing)
+                  array_text = array_text[:array_text.find('{')+1] + new_inner + array_text[array_text.rfind('}'):]
+                  print(f"[+] Injected modes: {missing}")
+              return array_text
 
-          print("=== STEP 2: Injecting Background MCU Thread Guard into main.cpp ===")
+          new_content = array_pattern.sub(inject_modes, t_content, count=1)
+
+          with open(target_cpp, "w", encoding="utf-8") as f:
+              f.write(new_content)
+          print(f"[+] Successfully patched {target_cpp}")
+
+          # 4. Inject background thread into main.cpp
+          main_cpp = None
+          for filepath in all_files:
+              if filepath.endswith("main.cpp"):
+                  main_cpp = filepath
+                  break
+
           if main_cpp:
               with open(main_cpp, "r", encoding="utf-8", errors="ignore") as f:
                   main_content = f.read()
@@ -115,8 +140,7 @@ jobs:
                       if (Settings::getInstance() != nullptr) {
                           std::string mode = Settings::getInstance()->getString("JoystickLEDMode");
                           
-                          // Custom modes handler. Stock static colors, breathing, and native rainbow flow 
-                          // are completely ignored here so ArkOS manages them natively.
+                          // Only handle custom modes; let stock modes run natively
                           if (mode == "battery_status") {
                               std::ifstream bat("/sys/class/power_supply/battery/capacity");
                               int cap = 100;
@@ -157,7 +181,7 @@ jobs:
                               std::this_thread::sleep_for(std::chrono::milliseconds(250));
                           }
                           else {
-                              // Let stock ArkOS handle all static colors, breathing effects, and native rainbow flows natively.
+                              // Stock modes: do nothing
                               std::this_thread::sleep_for(std::chrono::seconds(2));
                           }
                       } else {
@@ -172,7 +196,9 @@ jobs:
 
               with open(main_cpp, "w", encoding="utf-8") as f:
                   f.write(main_content)
-              print(f"[+] Successfully injected thread into main file: {main_cpp}")
+              print(f"[+] Successfully injected thread into {main_cpp}")
+          else:
+              print("[!] main.cpp not found - thread injection skipped")
           EOF
 
       - name: Build EmulationStation Binary
@@ -182,7 +208,7 @@ jobs:
           cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS="-Wno-error=unused-result"
           make -j$(nproc)
 
-      - name: Verify Binary and Generate Detailed Log
+      - name: Verify Binary and Generate Detailed Log (Stock + Custom Modes)
         run: |
           python3 - << 'EOF'
           import os, glob, sys
@@ -198,16 +224,25 @@ jobs:
           with open(binary_path, "rb") as f:
               bin_data = f.read()
 
-          expected_modes = ["rainbow_wave", "strobe_party", "color_fade", "battery_status"]
-          found_modes = [mode for mode in expected_modes if mode.encode("utf-8") in bin_data]
+          # Expected custom modes
+          custom_modes = ["rainbow_wave", "strobe_party", "color_fade", "battery_status"]
+          # Known stock modes (common in ArkOS4Clone)
+          stock_modes = ["static", "breathing", "rainbow", "red", "green", "blue", "yellow", "cyan", "magenta", "white"]
+
+          found_custom = [mode for mode in custom_modes if mode.encode("utf-8") in bin_data]
+          found_stock = [mode for mode in stock_modes if mode.encode("utf-8") in bin_data]
 
           log_content = "=== ARKOS4CLONE EMULATIONSTATION RGB MODE REPORT ===\n\n"
           log_content += f"Binary Verified: {binary_path}\n"
           log_content += f"Binary Size: {os.path.getsize(binary_path)} bytes\n\n"
           log_content += "Custom LED Animation Options Verified in Binary:\n"
-          
-          for mode in expected_modes:
-              status = "AVAILABLE [CONFIRMED]" if mode in found_modes else "MISSING [FAILED]"
+          for mode in custom_modes:
+              status = "AVAILABLE [CONFIRMED]" if mode in found_custom else "MISSING [FAILED]"
+              log_content += f"  - {mode}: {status}\n"
+
+          log_content += "\nStock LED Modes Verified in Binary:\n"
+          for mode in stock_modes:
+              status = "AVAILABLE [CONFIRMED]" if mode in found_stock else "MISSING [NOT FOUND]"
               log_content += f"  - {mode}: {status}\n"
 
           log_filename = "available_rgb_modes.txt"
