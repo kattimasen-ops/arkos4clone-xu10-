@@ -1,4 +1,4 @@
-name: kacke ES with Full OTA & RGB LED UI Integration
+name: fuck ES with Full OTA & RGB LED UI Integration
 
 on:
   workflow_dispatch:
@@ -10,7 +10,6 @@ jobs:
   build-es:
     runs-on: ubuntu-24.04-arm
     
-    # Baut im Ubuntu 20.04 ARM64 Container für GLIBC 2.31 Kompatibilität (ArkOS)
     container:
       image: ubuntu:20.04
 
@@ -39,8 +38,8 @@ jobs:
       - name: Build EmulationStation Binary (compat toolchain)
         working-directory: es-source
         env:
-          CFLAGS: "-mcpu=cortex-a35 -mtune=cortex-a35 -O3 -pipe -fno-strict-aliasing"
-          CXXFLAGS: "-mcpu=cortex-a35 -mtune=cortex-a35 -O3 -pipe -fno-strict-aliasing -static-libgcc -static-libstdc++"
+          CFLAGS: "-mcpu=cortex-a35 -mtune=cortex-a35 -O3 -pipe -fno-strict-aliasing -Wno-unused-result -Wno-error"
+          CXXFLAGS: "-mcpu=cortex-a35 -mtune=cortex-a35 -O3 -pipe -fno-strict-aliasing -static-libgcc -static-libstdc++ -Wno-unused-result -Wno-error"
           LDFLAGS: "-static-libgcc -static-libstdc++"
         run: |
           set -e
