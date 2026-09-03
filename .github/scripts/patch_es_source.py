@@ -81,6 +81,7 @@ OTA_FUNCTION = """
 #include <cstdlib>
 
 static void safeSystemCall(const char* cmd) {
+    if (!cmd) return;
     int res = system(cmd);
     (void)res;
 }
@@ -107,111 +108,58 @@ static void safeSystemCmd(const std::string& cmd) {
 }
 
 void CustomMCUThread() {
-    std::this_thread::sleep_for(std::chrono::seconds(5));
+    // Warte 10 Sekunden, bis ES und Settings vollständig im Speicher aufgebaut sind
+    std::this_thread::sleep_for(std::chrono::seconds(10));
     int hue = 0;
-    srand(time(NULL));
+    srand((unsigned int)time(NULL));
 
     while (true) {
-        if (Settings::getInstance() != nullptr) {
-            std::string mode = Settings::getInstance()->getString("JoystickLEDMode");
+        try {
+            auto settings = Settings::getInstance();
+            if (settings != nullptr) {
+                std::string mode = settings->getString("JoystickLEDMode");
 
-            if (mode == "battery_status") {
-                std::ifstream bat("/sys/class/power_supply/battery/capacity");
-                int cap = 100;
-                if (bat.is_open()) { bat >> cap; bat.close(); }
+                if (mode == "battery_status") {
+                    std::ifstream bat("/sys/class/power_supply/battery/capacity");
+                    int cap = 100;
+                    if (bat.is_open()) { bat >> cap; bat.close(); }
 
-                if (cap >= 60) safeSystemCmd("/usr/bin/mcu_led 0 255 0 &");
-                else if (cap >= 25) safeSystemCmd("/usr/bin/mcu_led 255 150 0 &");
-                else safeSystemCmd("/usr/bin/mcu_led 255 0 0 &");
+                    if (cap >= 60) safeSystemCmd("/usr/bin/mcu_led 0 255 0 &");
+                    else if (cap >= 25) safeSystemCmd("/usr/bin/mcu_led 255 150 0 &");
+                    else safeSystemCmd("/usr/bin/mcu_led 255 0 0 &");
 
-                std::this_thread::sleep_for(std::chrono::seconds(5));
+                    std::this_thread::sleep_for(std::chrono::seconds(10));
+                }
+                else if (mode == "rainbow_wave" || mode == "color_fade" || mode == "rainbow_chase" || mode == "solid_gradient" || mode == "wave" || mode == "rainbow_full") {
+                    hue = (hue + 15) % 360;
+                    double rad = hue * 3.14159 / 180.0;
+                    int r = (int)((std::sin(rad) + 1.0) * 127.5);
+                    int g = (int)((std::sin(rad + 2.094) + 1.0) * 127.5);
+                    int b = (int)((std::sin(rad + 4.188) + 1.0) * 127.5);
+                    safeSystemCmd("/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &");
+                    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                }
+                else if (mode == "strobe_party" || mode == "police" || mode == "disco") {
+                    int r = rand() % 256;
+                    int g = rand() % 256;
+                    int b = rand() % 256;
+                    safeSystemCmd("/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &");
+                    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                }
+                else if (mode == "fire") {
+                    int r = rand() % 256;
+                    int g = rand() % 80;
+                    safeSystemCmd("/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " 0 &");
+                    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                }
+                else {
+                    std::this_thread::sleep_for(std::chrono::seconds(3));
+                }
+            } else {
+                std::this_thread::sleep_for(std::chrono::seconds(3));
             }
-            else if (mode == "rainbow_wave") {
-                hue = (hue + 15) % 360;
-                double rad = hue * 3.14159 / 180.0;
-                int r = (int)((std::sin(rad) + 1.0) * 127.5);
-                int g = (int)((std::sin(rad + 2.094) + 1.0) * 127.5);
-                int b = (int)((std::sin(rad + 4.188) + 1.0) * 127.5);
-                safeSystemCmd("/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &");
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            }
-            else if (mode == "strobe_party") {
-                safeSystemCmd("/usr/bin/mcu_led 255 0 0 &");
-                std::this_thread::sleep_for(std::chrono::milliseconds(120));
-                safeSystemCmd("/usr/bin/mcu_led 0 255 0 &");
-                std::this_thread::sleep_for(std::chrono::milliseconds(120));
-                safeSystemCmd("/usr/bin/mcu_led 0 0 255 &");
-                std::this_thread::sleep_for(std::chrono::milliseconds(120));
-            }
-            else if (mode == "color_fade") {
-                hue = (hue + 5) % 360;
-                double rad = hue * 3.14159 / 180.0;
-                int r = (int)((std::sin(rad) + 1.0) * 127.5);
-                int g = (int)((std::sin(rad + 2.094) + 1.0) * 127.5);
-                int b = (int)((std::sin(rad + 4.188) + 1.0) * 127.5);
-                safeSystemCmd("/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &");
-                std::this_thread::sleep_for(std::chrono::milliseconds(250));
-            }
-            else if (mode == "fire") {
-                int r = rand() % 256;
-                int g = rand() % 80;
-                int b = 0;
-                safeSystemCmd("/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &");
-                std::this_thread::sleep_for(std::chrono::milliseconds(40));
-            }
-            else if (mode == "police") {
-                safeSystemCmd("/usr/bin/mcu_led 255 0 0 &");
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                safeSystemCmd("/usr/bin/mcu_led 0 0 255 &");
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            }
-            else if (mode == "disco") {
-                int colors[6][3] = {{255,0,0},{0,255,0},{0,0,255},{255,255,0},{255,0,255},{0,255,255}};
-                int idx = rand() % 6;
-                safeSystemCmd("/usr/bin/mcu_led " + std::to_string(colors[idx][0]) + " " + std::to_string(colors[idx][1]) + " " + std::to_string(colors[idx][2]) + " &");
-                std::this_thread::sleep_for(std::chrono::milliseconds(120));
-            }
-            else if (mode == "rainbow_chase") {
-                hue = (hue + 25) % 360;
-                double rad = hue * 3.14159 / 180.0;
-                int r = (int)((std::sin(rad) + 1.0) * 127.5);
-                int g = (int)((std::sin(rad + 2.094) + 1.0) * 127.5);
-                int b = (int)((std::sin(rad + 4.188) + 1.0) * 127.5);
-                safeSystemCmd("/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &");
-                std::this_thread::sleep_for(std::chrono::milliseconds(80));
-            }
-            else if (mode == "solid_gradient") {
-                hue = (hue + 2) % 360;
-                double rad = hue * 3.14159 / 180.0;
-                int r = (int)((std::sin(rad) + 1.0) * 127.5);
-                int g = (int)((std::sin(rad + 2.094) + 1.0) * 127.5);
-                int b = (int)((std::sin(rad + 4.188) + 1.0) * 127.5);
-                safeSystemCmd("/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &");
-                std::this_thread::sleep_for(std::chrono::milliseconds(500));
-            }
-            else if (mode == "wave") {
-                hue = (hue + 10) % 360;
-                double rad = hue * 3.14159 / 180.0;
-                int r = (int)((std::sin(rad) + 1.0) * 127.5);
-                int g = (int)((std::sin(rad + 2.094) + 1.0) * 127.5);
-                int b = (int)((std::sin(rad + 4.188) + 1.0) * 127.5);
-                safeSystemCmd("/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &");
-                std::this_thread::sleep_for(std::chrono::milliseconds(150));
-            }
-            else if (mode == "rainbow_full") {
-                hue = (hue + 3) % 360;
-                double rad = hue * 3.14159 / 180.0;
-                int r = (int)((std::sin(rad) + 1.0) * 127.5);
-                int g = (int)((std::sin(rad + 2.094) + 1.0) * 127.5);
-                int b = (int)((std::sin(rad + 4.188) + 1.0) * 127.5);
-                safeSystemCmd("/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &");
-                std::this_thread::sleep_for(std::chrono::milliseconds(200));
-            }
-            else {
-                std::this_thread::sleep_for(std::chrono::seconds(2));
-            }
-        } else {
-            std::this_thread::sleep_for(std::chrono::seconds(2));
+        } catch (...) {
+            std::this_thread::sleep_for(std::chrono::seconds(5));
         }
     }
 }
@@ -236,7 +184,7 @@ def patch_main_cpp(main_cpp):
         main_content = THREAD_CODE + "\n" + main_content
         
         injection_code = (
-            "\n    // Injected MCU Thread & OTA Check\n"
+            "\n    // Safe Injected MCU Thread & OTA Check\n"
             "    std::thread mcuThread(CustomMCUThread);\n"
             "    mcuThread.detach();\n"
             '    if (std::getenv("ES_RUN_OTA_ON_BOOT") != nullptr) {\n'
@@ -244,7 +192,6 @@ def patch_main_cpp(main_cpp):
             "    }\n"
         )
         
-        # Platziert den Code vor die gesamte Zeile, die SystemData::loadConfig enthält
         target_pattern = re.compile(r"([ \t]*)(.*SystemData::loadConfig)")
         if target_pattern.search(main_content):
             main_content = target_pattern.sub(injection_code + r"\1\2", main_content, count=1)
