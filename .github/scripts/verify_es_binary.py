@@ -41,7 +41,7 @@ def main():
     checks = {
         "OTA Update": "OTA Update" in out,
         "update_check.sh": "update_check.sh" in out,
-        "ES_RUN_OTA_ON_BOOT": "ES_RUN_OTA_ON_BOOT" in out,
+        "runOtaUpdateScript": "runOtaUpdateScript" in out,
     }
     for mode in CUSTOM_MODES:
         checks[f"LED-Modus: {mode}"] = mode in out
