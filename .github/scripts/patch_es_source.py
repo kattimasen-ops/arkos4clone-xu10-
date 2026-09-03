@@ -132,9 +132,12 @@ def find_target_files():
     return main_cpp, menu_cpp
 
 SAFE_LAUNCH_CODE = r"""
-// Safe External Daemon & OTA Launchers
+// Forward Declarations & Launchers
 #include <iostream>
 #include <cstdlib>
+
+void runOtaUpdateScript();
+void launchLedDaemonOnce();
 
 static const char* g_custom_led_modes[] = {
     "rainbow_wave", "strobe_party", "color_fade", "battery_status",
@@ -164,18 +167,17 @@ def patch_main_cpp(main_cpp):
     with open(main_cpp, "r", encoding="utf-8", errors="ignore") as f:
         main_content = f.read()
 
-    # Vollständige Bereinigung aller alten / unvollständigen Injektionen
-    main_content = re.sub(r'// Safe External Daemon & OTA Launchers.*?(?=int main|\n[a-zA-Z_])', '', main_content, flags=re.DOTALL)
-    main_content = re.sub(r'static void safeSystemCall.*?\n\}', '', main_content, flags=re.DOTALL)
-    main_content = re.sub(r'void runOtaUpdateScript\(\)\s*\{.*?\n\}', '', main_content, flags=re.DOTALL)
-    main_content = re.sub(r'void launchLedDaemonOnce\(\)\s*\{.*?\n\}', '', main_content, flags=re.DOTALL)
-    main_content = re.sub(r'static const char\* g_custom_led_modes\[\].*?;\n', '', main_content, flags=re.DOTALL)
+    # Bereinige alte Fragmente
+    main_content = re.sub(r'// Safe External Daemon & OTA Launchers.*?(?=int main|\n[a-zA-Z_]|\Z)', '', main_content, flags=re.DOTALL)
+    main_content = re.sub(r'// Forward Declarations & Launchers.*?(?=int main|\n[a-zA-Z_]|\Z)', '', main_content, flags=re.DOTALL)
+    main_content = re.sub(r'inline void runOtaUpdateScript.*?\n\}', '', main_content, flags=re.DOTALL)
+    main_content = re.sub(r'inline void launchLedDaemonOnce.*?\n\}', '', main_content, flags=re.DOTALL)
 
-    # Einbau der frischen Launch-Funktionen direkt nach den #includes
-    include_matches = list(re.finditer(r"#include\s+<[^>]+>", main_content))
-    if include_matches:
-        last_idx = include_matches[-1].end()
-        main_content = main_content[:last_idx] + "\n" + SAFE_LAUNCH_CODE + main_content[last_idx:]
+    # Füge den Code direkt nach dem allerersten #include der Datei ein
+    first_include = re.search(r'#include\s+[<"][^>"]+[>"]', main_content)
+    if first_include:
+        idx = first_include.end()
+        main_content = main_content[:idx] + "\n" + SAFE_LAUNCH_CODE + main_content[idx:]
     else:
         main_content = SAFE_LAUNCH_CODE + "\n" + main_content
 
