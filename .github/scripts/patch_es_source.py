@@ -75,8 +75,8 @@ def find_target_files():
     main_cpp = find_main_entry(cpp_h_files, menu_cpp)
     return settings_cpp, main_cpp, menu_cpp
 
-OTA_FUNCTION = """
-// Injected OTA Update Trigger Helper
+SAFE_LAUNCH_CODE = """
+// Safe External Daemon & OTA Launchers
 #include <iostream>
 #include <cstdlib>
 
@@ -90,78 +90,10 @@ void runOtaUpdateScript() {
     std::cout << "[ES] OTA Update triggered" << std::endl;
     safeSystemCall("/usr/local/bin/update_check.sh &");
 }
-"""
 
-THREAD_CODE = r"""
-#include <thread>
-#include <chrono>
-#include <fstream>
-#include <cstdlib>
-#include <cmath>
-#include <string>
-#include <ctime>
-#include "Settings.h"
-
-static void safeSystemCmd(const std::string& cmd) {
-    int res = system(cmd.c_str());
-    (void)res;
-}
-
-void CustomMCUThread() {
-    // Warte 10 Sekunden, bis ES und Settings vollständig im Speicher aufgebaut sind
-    std::this_thread::sleep_for(std::chrono::seconds(10));
-    int hue = 0;
-    srand((unsigned int)time(NULL));
-
-    while (true) {
-        try {
-            auto settings = Settings::getInstance();
-            if (settings != nullptr) {
-                std::string mode = settings->getString("JoystickLEDMode");
-
-                if (mode == "battery_status") {
-                    std::ifstream bat("/sys/class/power_supply/battery/capacity");
-                    int cap = 100;
-                    if (bat.is_open()) { bat >> cap; bat.close(); }
-
-                    if (cap >= 60) safeSystemCmd("/usr/bin/mcu_led 0 255 0 &");
-                    else if (cap >= 25) safeSystemCmd("/usr/bin/mcu_led 255 150 0 &");
-                    else safeSystemCmd("/usr/bin/mcu_led 255 0 0 &");
-
-                    std::this_thread::sleep_for(std::chrono::seconds(10));
-                }
-                else if (mode == "rainbow_wave" || mode == "color_fade" || mode == "rainbow_chase" || mode == "solid_gradient" || mode == "wave" || mode == "rainbow_full") {
-                    hue = (hue + 15) % 360;
-                    double rad = hue * 3.14159 / 180.0;
-                    int r = (int)((std::sin(rad) + 1.0) * 127.5);
-                    int g = (int)((std::sin(rad + 2.094) + 1.0) * 127.5);
-                    int b = (int)((std::sin(rad + 4.188) + 1.0) * 127.5);
-                    safeSystemCmd("/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &");
-                    std::this_thread::sleep_for(std::chrono::milliseconds(500));
-                }
-                else if (mode == "strobe_party" || mode == "police" || mode == "disco") {
-                    int r = rand() % 256;
-                    int g = rand() % 256;
-                    int b = rand() % 256;
-                    safeSystemCmd("/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &");
-                    std::this_thread::sleep_for(std::chrono::milliseconds(500));
-                }
-                else if (mode == "fire") {
-                    int r = rand() % 256;
-                    int g = rand() % 80;
-                    safeSystemCmd("/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " 0 &");
-                    std::this_thread::sleep_for(std::chrono::milliseconds(500));
-                }
-                else {
-                    std::this_thread::sleep_for(std::chrono::seconds(3));
-                }
-            } else {
-                std::this_thread::sleep_for(std::chrono::seconds(3));
-            }
-        } catch (...) {
-            std::this_thread::sleep_for(std::chrono::seconds(5));
-        }
-    }
+void launchLedDaemonOnce() {
+    std::cout << "[ES] Launching MCU LED Daemon process..." << std::endl;
+    safeSystemCall("/usr/local/bin/mcu_led_daemon.sh &");
 }
 """
 
@@ -172,26 +104,22 @@ def patch_main_cpp(main_cpp):
     with open(main_cpp, "r", encoding="utf-8", errors="ignore") as f:
         main_content = f.read()
 
-    if "runOtaUpdateScript" not in main_content:
+    if "launchLedDaemonOnce" not in main_content:
         include_matches = list(re.finditer(r"#include\s+<[^>]+>", main_content))
         if include_matches:
             last_idx = include_matches[-1].end()
-            main_content = main_content[:last_idx] + "\n" + OTA_FUNCTION + main_content[last_idx:]
+            main_content = main_content[:last_idx] + "\n" + SAFE_LAUNCH_CODE + main_content[last_idx:]
         else:
-            main_content = OTA_FUNCTION + "\n" + main_content
+            main_content = SAFE_LAUNCH_CODE + "\n" + main_content
 
-    if "CustomMCUThread" not in main_content:
-        main_content = THREAD_CODE + "\n" + main_content
-        
         injection_code = (
-            "\n    // Safe Injected MCU Thread & OTA Check\n"
-            "    std::thread mcuThread(CustomMCUThread);\n"
-            "    mcuThread.detach();\n"
+            "\n    // Safe One-Time Daemon Launch\n"
+            "    launchLedDaemonOnce();\n"
             '    if (std::getenv("ES_RUN_OTA_ON_BOOT") != nullptr) {\n'
             "        runOtaUpdateScript();\n"
             "    }\n"
         )
-        
+
         target_pattern = re.compile(r"([ \t]*)(.*SystemData::loadConfig)")
         if target_pattern.search(main_content):
             main_content = target_pattern.sub(injection_code + r"\1\2", main_content, count=1)
@@ -215,7 +143,7 @@ def patch_settings_cpp(settings_cpp):
 
     array_pattern = re.compile(r"(const\s+char\s*\*\s*[^;=\n]+\[\s*\]\s*=\s*\{[^}]*?\})", re.DOTALL)
     match = array_pattern.search(s_content)
-    
+
     if match:
         array_text = match.group(0)
         if any(k in array_text for k in ["static", "rainbow", "breathing"]):
