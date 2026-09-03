@@ -131,12 +131,11 @@ def find_target_files():
     main_cpp = find_main_entry(cpp_h_files, menu_cpp)
     return main_cpp, menu_cpp
 
-SAFE_LAUNCH_CODE = """
+SAFE_LAUNCH_CODE = r"""
 // Safe External Daemon & OTA Launchers
 #include <iostream>
 #include <cstdlib>
 
-// Explicit LED String Table to guarantee retention in binary string table
 static const char* g_custom_led_modes[] = {
     "rainbow_wave", "strobe_party", "color_fade", "battery_status",
     "fire", "police", "disco", "rainbow_chase",
@@ -145,7 +144,7 @@ static const char* g_custom_led_modes[] = {
 
 static void safeSystemCall(const char* cmd) {
     if (!cmd) return;
-    if (cmd[0] == '\\0') {
+    if (cmd[0] == '\0') {
         (void)g_custom_led_modes[0];
     }
     int res = system(cmd);
@@ -170,14 +169,21 @@ def patch_main_cpp(main_cpp):
     with open(main_cpp, "r", encoding="utf-8", errors="ignore") as f:
         main_content = f.read()
 
-    if "launchLedDaemonOnce" not in main_content:
-        include_matches = list(re.finditer(r"#include\s+<[^>]+>", main_content))
-        if include_matches:
-            last_idx = include_matches[-1].end()
-            main_content = main_content[:last_idx] + "\n" + SAFE_LAUNCH_CODE + main_content[last_idx:]
-        else:
-            main_content = SAFE_LAUNCH_CODE + "\n" + main_content
+    # Alte/Inkonsistente Helper-Injektionen entfernen
+    main_content = re.sub(r'static void safeSystemCall.*?\n\}', '', main_content, flags=re.DOTALL)
+    main_content = re.sub(r'void runOtaUpdateScript.*?\n\}', '', main_content, flags=re.DOTALL)
+    main_content = re.sub(r'void launchLedDaemonOnce.*?\n\}', '', main_content, flags=re.DOTALL)
+    main_content = re.sub(r'void CustomMCUThread.*?\n\}', '', main_content, flags=re.DOTALL)
 
+    # Injektion direkt unter die letzten #include Anweisungen
+    include_matches = list(re.finditer(r"#include\s+<[^>]+>", main_content))
+    if include_matches:
+        last_idx = include_matches[-1].end()
+        main_content = main_content[:last_idx] + "\n" + SAFE_LAUNCH_CODE + main_content[last_idx:]
+    else:
+        main_content = SAFE_LAUNCH_CODE + "\n" + main_content
+
+    if "launchLedDaemonOnce();" not in main_content:
         injection_code = (
             "\n    // Safe One-Time Daemon Launch\n"
             "    launchLedDaemonOnce();\n"
@@ -213,7 +219,6 @@ def patch_all_led_settings():
         if "JoystickLED" in content or "mcu_led" in content or "JOYSTICK LED" in content:
             patched = False
             
-            # Match C-style Arrays / Vectors
             if "// INJECTED_CUSTOM_LED_MODES" not in content:
                 array_pattern = re.compile(r"(const\s+char\s*\*\s*\w+\[\s*\]\s*=\s*\{[^}]*?\})", re.DOTALL)
                 match = array_pattern.search(content)
@@ -225,7 +230,6 @@ def patch_all_led_settings():
                     content = content.replace(array_text, new_array, 1)
                     patched = True
 
-            # Match OptionListComponent UI additions
             if "->add(" in content or ".add(" in content:
                 for base in ["rainbow", "static", "off", "box"]:
                     pattern = re.compile(rf'(\w+(?:->|\.)add\(\s*"_{{0,2}}\({base}\)"|\w+(?:->|\.)add\(\s*"{base}"[^;]+;\))', re.IGNORECASE)
