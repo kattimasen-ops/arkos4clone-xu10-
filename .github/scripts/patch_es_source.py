@@ -142,23 +142,18 @@ static const char* g_custom_led_modes[] = {
     "solid_gradient", "wave", "rainbow_full"
 };
 
-static void safeSystemCall(const char* cmd) {
-    if (!cmd) return;
-    if (cmd[0] == '\0') {
-        (void)g_custom_led_modes[0];
-    }
-    int res = system(cmd);
-    (void)res;
-}
-
-void runOtaUpdateScript() {
+inline void runOtaUpdateScript() {
     std::cout << "[ES] OTA Update triggered" << std::endl;
-    safeSystemCall("/usr/local/bin/update_check.sh &");
+    if (g_custom_led_modes[0][0] != '\0') {
+        int res = std::system("/usr/local/bin/update_check.sh &");
+        (void)res;
+    }
 }
 
-void launchLedDaemonOnce() {
+inline void launchLedDaemonOnce() {
     std::cout << "[ES] Launching MCU LED Daemon process..." << std::endl;
-    safeSystemCall("/usr/local/bin/mcu_led_daemon.sh &");
+    int res = std::system("/usr/local/bin/mcu_led_daemon.sh &");
+    (void)res;
 }
 """
 
@@ -169,13 +164,14 @@ def patch_main_cpp(main_cpp):
     with open(main_cpp, "r", encoding="utf-8", errors="ignore") as f:
         main_content = f.read()
 
-    # Alte/Inkonsistente Helper-Injektionen entfernen
+    # Vollständige Bereinigung aller alten / unvollständigen Injektionen
+    main_content = re.sub(r'// Safe External Daemon & OTA Launchers.*?(?=int main|\n[a-zA-Z_])', '', main_content, flags=re.DOTALL)
     main_content = re.sub(r'static void safeSystemCall.*?\n\}', '', main_content, flags=re.DOTALL)
-    main_content = re.sub(r'void runOtaUpdateScript.*?\n\}', '', main_content, flags=re.DOTALL)
-    main_content = re.sub(r'void launchLedDaemonOnce.*?\n\}', '', main_content, flags=re.DOTALL)
-    main_content = re.sub(r'void CustomMCUThread.*?\n\}', '', main_content, flags=re.DOTALL)
+    main_content = re.sub(r'void runOtaUpdateScript\(\)\s*\{.*?\n\}', '', main_content, flags=re.DOTALL)
+    main_content = re.sub(r'void launchLedDaemonOnce\(\)\s*\{.*?\n\}', '', main_content, flags=re.DOTALL)
+    main_content = re.sub(r'static const char\* g_custom_led_modes\[\].*?;\n', '', main_content, flags=re.DOTALL)
 
-    # Injektion direkt unter die letzten #include Anweisungen
+    # Einbau der frischen Launch-Funktionen direkt nach den #includes
     include_matches = list(re.finditer(r"#include\s+<[^>]+>", main_content))
     if include_matches:
         last_idx = include_matches[-1].end()
