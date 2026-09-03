@@ -244,8 +244,10 @@ def patch_main_cpp(main_cpp):
             "    }\n"
         )
         
-        if "SystemData::loadConfig" in main_content:
-            main_content = main_content.replace("SystemData::loadConfig", injection_code + "    SystemData::loadConfig", 1)
+        # Platziert den Code vor die gesamte Zeile, die SystemData::loadConfig enthält
+        target_pattern = re.compile(r"([ \t]*)(.*SystemData::loadConfig)")
+        if target_pattern.search(main_content):
+            main_content = target_pattern.sub(injection_code + r"\1\2", main_content, count=1)
         else:
             main_content = re.sub(
                 r"(while\s*\(\s*!\s*window\.isDone\s*\(\s*\)\s*\))",
