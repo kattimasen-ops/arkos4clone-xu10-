@@ -1,4 +1,4 @@
-name: Bastel ES with Full OTA & RGB LED UI Integration
+name: fnkt ES with Full OTA & RGB LED UI Integration
 
 on:
   workflow_dispatch:
