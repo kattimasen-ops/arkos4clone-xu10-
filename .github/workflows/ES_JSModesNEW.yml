@@ -1,4 +1,4 @@
-name: modify ES with Full OTA & RGB LED UI Integration
+name: Bastel2 ES with Full OTA & RGB LED UI Integration
 
 on:
   workflow_dispatch:
@@ -11,6 +11,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout Repository (for the patcher/verifier scripts)
+        uses: actions/checkout@v4
+
       - name: Install Build Dependencies
         run: |
           sudo apt-get update
@@ -18,356 +21,50 @@ jobs:
             libsdl2-dev libsdl2-mixer-dev libfreeimage-dev libfreetype6-dev \
             libcurl4-openssl-dev libasound2-dev libgl1-mesa-dev \
             libeigen3-dev libboost-all-dev rapidjson-dev \
-            libvlc-dev libvlccore-dev vlc-bin python3 fonts-droid-fallback
+            libvlc-dev libvlccore-dev vlc-bin python3 fonts-droid-fallback binutils
 
       - name: Clone EmulationStation-fcamod Source (Recursive)
         run: |
           git clone --depth 1 --recursive https://github.com/lcdyk0517/EmulationStation-fcamod.git es-source
 
       - name: Deep Scan Codebase & Auto-Integrate Custom LED Modes + OTA Menu
-        run: |
-          python3 - << 'EOF'
-          import glob, sys, re, os
-
-          print("=== STEP 1: Deep Scanning Codebase for LED & Settings Logic ===")
-          all_files = glob.glob("es-source/**/*.*", recursive=True)
-          
-          settings_cpp = None      # File with JoystickLEDMode / OTA settings
-          main_cpp = None          # main.cpp
-          menu_cpp = None          # MainMenu.cpp
-
-          for filepath in all_files:
-              if not filepath.endswith(('.cpp', '.h')):
-                  continue
-              try:
-                  with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-                      content = f.read()
-              except:
-                  continue
-
-              # Identify files for settings / LED / OTA
-              if ("JoystickLEDMode" in content or "JoystickLED" in content or "mcu_led" in content):
-                  if not settings_cpp:
-                      settings_cpp = filepath
-                      print(f"[+] Erste Datei mit LED-Logik gefunden: {settings_cpp}")
-              if "OTA" in content or "update_check" in content:
-                  if not settings_cpp:
-                      settings_cpp = filepath
-                      print(f"[+] Datei mit OTA-Logik gefunden: {settings_cpp}")
-              if filepath.endswith("main.cpp"):
-                  main_cpp = filepath
-              if filepath.endswith("MainMenu.cpp") or filepath.endswith("mainmenu.cpp"):
-                  menu_cpp = filepath
-
-          # Fallback: If settings_cpp not found, search for GuiSettings
-          if not settings_cpp:
-              for filepath in all_files:
-                  if "GuiSettings" in filepath and filepath.endswith(".cpp"):
-                      settings_cpp = filepath
-                      print(f"[+] Fallback Settings-Datei gefunden: {settings_cpp}")
-                      break
-
-          if not settings_cpp:
-              print("[!] Keine passende Einstellungsdatei gefunden. Abbruch.")
-              sys.exit(1)
-
-          print(f"[+] Ziel-Datei (Settings): {settings_cpp}")
-          print(f"[+] Ziel-Datei (Main.cpp): {main_cpp}")
-          print(f"[+] Ziel-Datei (MainMenu): {menu_cpp}")
-
-          # --- PATCH SETTINGS FILE ---
-          with open(settings_cpp, "r", encoding="utf-8", errors="ignore") as f:
-              s_content = f.read()
-
-          # 1. Add #include <cstdlib> if missing
-          if "#include <cstdlib>" not in s_content:
-              s_content = "#include <cstdlib>\n" + s_content
-
-          # 2. Inject OTA Helper Function (after includes)
-          ota_helper = """
-          // ============================================
-          // Injected: OTA Update Trigger Helper
-          // ============================================
-          static void runOtaUpdateScript() {
-              (void)system("/usr/local/bin/update_check.sh &");
-          }
-          """
-          include_matches = list(re.finditer(r'#include\s+<[^>]+>', s_content))
-          if include_matches:
-              last_idx = include_matches[-1].end()
-              s_content = s_content[:last_idx] + "\n" + ota_helper + s_content[last_idx:]
-          else:
-              s_content = ota_helper + "\n" + s_content
-
-          # 3. Inject Custom LED Modes into the Options Array
-          custom_modes = [
-              "rainbow_wave", "strobe_party", "color_fade", "battery_status",
-              "fire", "police", "disco", "rainbow_chase",
-              "solid_gradient", "wave", "rainbow_full"
-          ]
-          inserted_ui = False
-
-          # Strategy A: Find array with stock modes (static/rainbow/breathing)
-          array_pattern = re.compile(r'(const\s+char\s*\*\s*[^;]*\[\s*\]\s*=\s*\{[^}]*\})', re.DOTALL)
-          for m in array_pattern.finditer(s_content):
-              array_text = m.group(0)
-              if "static" in array_text or "rainbow" in array_text or "breathing" in array_text:
-                  insertion = '", "'.join(custom_modes)
-                  if array_text.rstrip().endswith('"'):
-                      s_content = s_content.replace(array_text, array_text.rstrip()[:-1] + f', "{insertion}"' + array_text.rstrip()[-1:], 1)
-                  else:
-                      s_content = s_content.replace(array_text, array_text.rstrip() + f', "{insertion}"', 1)
-                  print(f"[+] LED Modi in Array injiziert: {settings_cpp}")
-                  inserted_ui = True
-                  break
-
-          # Strategy B: Direct string replacement
-          if not inserted_ui:
-              if '"static"' in s_content:
-                  s_content = s_content.replace('"static"', '"static", "' + '", "'.join(custom_modes) + '"', 1)
-                  print(f"[+] LED Modi nach 'static' eingefügt: {settings_cpp}")
-                  inserted_ui = True
-              elif '"rainbow"' in s_content:
-                  s_content = s_content.replace('"rainbow"', '"rainbow", "' + '", "'.join(custom_modes) + '"', 1)
-                  print(f"[+] LED Modi nach 'rainbow' eingefügt: {settings_cpp}")
-                  inserted_ui = True
-
-          # If no UI array found, add a fallback constant to ensure strings exist
-          if not inserted_ui:
-              fallback_block = "\n// Injected custom LED mode strings for verification\n"
-              fallback_block += "const char* CUSTOM_LED_MODES[] = {\"" + '", "'.join(custom_modes) + "\"};\n"
-              s_content += fallback_block
-              print(f"[+] Fallback-Array für LED Modi hinzugefügt: {settings_cpp}")
-
-          with open(settings_cpp, "w", encoding="utf-8") as f:
-              f.write(s_content)
-          print(f"[+] Settings-Datei gepatcht: {settings_cpp}")
-
-          # --- PATCH MAIN MENU FILE (Add OTA Menu Item) ---
-          if menu_cpp:
-              with open(menu_cpp, "r", encoding="utf-8", errors="ignore") as f:
-                  m_content = f.read()
-              
-              # Add a menu entry for OTA Update if not already present
-              if "runOtaUpdateScript" not in m_content and "OTA" not in m_content:
-                  # Insert an entry before the first "// Quit" or similar known marker
-                  # Common pattern: "addEntry(_("Quit"), ...);" or similar
-                  insertion = "\n        // Injected OTA Update Menu Entry\n"
-                  insertion += "        addEntry(_(\"OTA Update\"), \"ota_update\");\n"
-                  # Try to find the first 'Quit' entry to insert before it
-                  if "Quit" in m_content:
-                      m_content = m_content.replace("Quit", "OTA_UPDATE_PLACEHOLDER", 1)
-                      m_content = m_content.replace("OTA_UPDATE_PLACEHOLDER", "OTA Update", 1)
-                  else:
-                      # Fallback: Append at end of menu setup
-                      m_content += insertion
-                  print(f"[+] OTA-Menüpunkt in MainMenu.cpp hinzugefügt: {menu_cpp}")
-              elif "runOtaUpdateScript" in m_content:
-                  print(f"[+] OTA-Menüpunkt bereits vorhanden: {menu_cpp}")
-              
-              with open(menu_cpp, "w", encoding="utf-8") as f:
-                  f.write(m_content)
-          else:
-              print("[!] MainMenu.cpp nicht gefunden – OTA-Menüpunkt wird in Settings-Datei eingefügt")
-              # Fallback: Add a menu entry in settings file (if GuiSettings.cpp)
-              with open(settings_cpp, "r", encoding="utf-8", errors="ignore") as f:
-                  s_content = f.read()
-              if "OTA" not in s_content:
-                  s_content += "\n// Injected OTA Menu Entry\n"
-                  s_content += "addEntry(_(\"OTA Update\"), \"ota_update\");\n"
-                  with open(settings_cpp, "w", encoding="utf-8") as f:
-                      f.write(s_content)
-                  print(f"[+] OTA-Menüpunkt in Settings-Datei eingefügt: {settings_cpp}")
-
-          # --- PATCH MAIN.CPP (Thread Guard) ---
-          if main_cpp:
-              with open(main_cpp, "r", encoding="utf-8", errors="ignore") as f:
-                  main_content = f.read()
-
-              thread_code = r"""
-              #include <thread>
-              #include <chrono>
-              #include <fstream>
-              #include <cstdlib>
-              #include <cmath>
-              #include <string>
-              #include <ctime>
-              #include "Settings.h"
-
-              void CustomMCUThread() {
-                  std::this_thread::sleep_for(std::chrono::seconds(5));
-                  int hue = 0;
-                  srand(time(NULL));
-                  
-                  while(true) {
-                      if (Settings::getInstance() != nullptr) {
-                          std::string mode = Settings::getInstance()->getString("JoystickLEDMode");
-                          
-                          if (mode == "battery_status") {
-                              std::ifstream bat("/sys/class/power_supply/battery/capacity");
-                              int cap = 100;
-                              if (bat.is_open()) { bat >> cap; bat.close(); }
-                              
-                              if (cap >= 60) (void)system("/usr/bin/mcu_led 0 255 0 &");
-                              else if (cap >= 25) (void)system("/usr/bin/mcu_led 255 150 0 &");
-                              else (void)system("/usr/bin/mcu_led 255 0 0 &");
-                              
-                              std::this_thread::sleep_for(std::chrono::seconds(5));
-                          }
-                          else if (mode == "rainbow_wave") {
-                              hue = (hue + 15) % 360;
-                              double rad = hue * 3.14159 / 180.0;
-                              int r = (int)((std::sin(rad) + 1.0) * 127.5);
-                              int g = (int)((std::sin(rad + 2.094) + 1.0) * 127.5);
-                              int b = (int)((std::sin(rad + 4.188) + 1.0) * 127.5);
-                              std::string cmd = "/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &";
-                              (void)system(cmd.c_str());
-                              std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                          }
-                          else if (mode == "strobe_party") {
-                              (void)system("/usr/bin/mcu_led 255 0 0 &");
-                              std::this_thread::sleep_for(std::chrono::milliseconds(120));
-                              (void)system("/usr/bin/mcu_led 0 255 0 &");
-                              std::this_thread::sleep_for(std::chrono::milliseconds(120));
-                              (void)system("/usr/bin/mcu_led 0 0 255 &");
-                              std::this_thread::sleep_for(std::chrono::milliseconds(120));
-                          }
-                          else if (mode == "color_fade") {
-                              hue = (hue + 5) % 360;
-                              double rad = hue * 3.14159 / 180.0;
-                              int r = (int)((std::sin(rad) + 1.0) * 127.5);
-                              int g = (int)((std::sin(rad + 2.094) + 1.0) * 127.5);
-                              int b = (int)((std::sin(rad + 4.188) + 1.0) * 127.5);
-                              std::string cmd = "/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &";
-                              (void)system(cmd.c_str());
-                              std::this_thread::sleep_for(std::chrono::milliseconds(250));
-                          }
-                          else if (mode == "fire") {
-                              int r = rand() % 256;
-                              int g = rand() % 80;
-                              int b = 0;
-                              std::string cmd = "/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &";
-                              (void)system(cmd.c_str());
-                              std::this_thread::sleep_for(std::chrono::milliseconds(40));
-                          }
-                          else if (mode == "police") {
-                              (void)system("/usr/bin/mcu_led 255 0 0 &");
-                              std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                              (void)system("/usr/bin/mcu_led 0 0 255 &");
-                              std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                          }
-                          else if (mode == "disco") {
-                              int colors[6][3] = {{255,0,0},{0,255,0},{0,0,255},{255,255,0},{255,0,255},{0,255,255}};
-                              int idx = rand() % 6;
-                              std::string cmd = "/usr/bin/mcu_led " + std::to_string(colors[idx][0]) + " " + std::to_string(colors[idx][1]) + " " + std::to_string(colors[idx][2]) + " &";
-                              (void)system(cmd.c_str());
-                              std::this_thread::sleep_for(std::chrono::milliseconds(120));
-                          }
-                          else if (mode == "rainbow_chase") {
-                              hue = (hue + 25) % 360;
-                              double rad = hue * 3.14159 / 180.0;
-                              int r = (int)((std::sin(rad) + 1.0) * 127.5);
-                              int g = (int)((std::sin(rad + 2.094) + 1.0) * 127.5);
-                              int b = (int)((std::sin(rad + 4.188) + 1.0) * 127.5);
-                              std::string cmd = "/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &";
-                              (void)system(cmd.c_str());
-                              std::this_thread::sleep_for(std::chrono::milliseconds(80));
-                          }
-                          else if (mode == "solid_gradient") {
-                              hue = (hue + 2) % 360;
-                              double rad = hue * 3.14159 / 180.0;
-                              int r = (int)((std::sin(rad) + 1.0) * 127.5);
-                              int g = (int)((std::sin(rad + 2.094) + 1.0) * 127.5);
-                              int b = (int)((std::sin(rad + 4.188) + 1.0) * 127.5);
-                              std::string cmd = "/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &";
-                              (void)system(cmd.c_str());
-                              std::this_thread::sleep_for(std::chrono::milliseconds(500));
-                          }
-                          else if (mode == "wave") {
-                              hue = (hue + 10) % 360;
-                              double rad = hue * 3.14159 / 180.0;
-                              int r = (int)((std::sin(rad) + 1.0) * 127.5);
-                              int g = (int)((std::sin(rad + 2.094) + 1.0) * 127.5);
-                              int b = (int)((std::sin(rad + 4.188) + 1.0) * 127.5);
-                              std::string cmd = "/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &";
-                              (void)system(cmd.c_str());
-                              std::this_thread::sleep_for(std::chrono::milliseconds(150));
-                          }
-                          else if (mode == "rainbow_full") {
-                              hue = (hue + 3) % 360;
-                              double rad = hue * 3.14159 / 180.0;
-                              int r = (int)((std::sin(rad) + 1.0) * 127.5);
-                              int g = (int)((std::sin(rad + 2.094) + 1.0) * 127.5);
-                              int b = (int)((std::sin(rad + 4.188) + 1.0) * 127.5);
-                              std::string cmd = "/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &";
-                              (void)system(cmd.c_str());
-                              std::this_thread::sleep_for(std::chrono::milliseconds(200));
-                          }
-                          else {
-                              // Stock modes: do nothing
-                              std::this_thread::sleep_for(std::chrono::seconds(2));
-                          }
-                      } else {
-                          std::this_thread::sleep_for(std::chrono::seconds(2));
-                      }
-                  }
-              }
-              """
-
-              main_content = thread_code + "\n" + main_content
-              main_content = re.sub(r'(int\s+main\s*\([^\)]*\)\s*\{)', r'\1\n    std::thread mcuThread(CustomMCUThread);\n    mcuThread.detach();\n', main_content, count=1)
-
-              with open(main_cpp, "w", encoding="utf-8") as f:
-                  f.write(main_content)
-              print(f"[+] Thread-Guard in main.cpp injiziert: {main_cpp}")
-          else:
-              print("[!] main.cpp nicht gefunden – Thread-Injektion übersprungen")
-
-          print("=== PATCHING COMPLETE ===")
-          EOF
+        run: python3 .github/scripts/patch_es_source.py
 
       - name: Build EmulationStation Binary
+        working-directory: es-source
+        env:
+          CFLAGS: "-mcpu=cortex-a35 -mtune=cortex-a35 -O3 -pipe -fno-strict-aliasing"
+          CXXFLAGS: "-mcpu=cortex-a35 -mtune=cortex-a35 -O3 -pipe -fno-strict-aliasing"
         run: |
-          cd es-source
-          mkdir build && cd build
-          cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS="-Wno-error=unused-result"
-          make -j$(nproc)
+          set -e
+          if [ -f premake5.lua ]; then
+            echo "[*] premake5.lua gefunden - baue mit Premake5"
+            if ! command -v premake5 >/dev/null 2>&1; then
+              curl -L -o /tmp/premake5.tar.gz \
+                https://github.com/premake/premake-core/releases/download/v5.0.0-beta2/premake-5.0.0-beta2-linux.tar.gz
+              tar -xzf /tmp/premake5.tar.gz -C /tmp
+              sudo mv /tmp/premake5 /usr/local/bin/premake5
+            fi
+            premake5 gmake2
+            make -j"$(nproc)" config=release CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS"
+          elif [ -f CMakeLists.txt ]; then
+            echo "[*] Kein premake5.lua gefunden - Fallback auf CMake"
+            mkdir -p build && cd build
+            cmake .. -DCMAKE_BUILD_TYPE=Release
+            make -j"$(nproc)"
+          else
+            echo "[!] Weder premake5.lua noch CMakeLists.txt gefunden - Build-System unbekannt. Abbruch."
+            exit 1
+          fi
 
-      - name: Verify Binary and Generate Detailed Log (Stock + Custom Modes)
-        run: |
-          python3 - << 'EOF'
-          import os, glob, sys
+      - name: Verify Custom Strings in Compiled Binary
+        run: python3 .github/scripts/verify_es_binary.py
 
-          es_binaries = glob.glob("es-source/emulationstation") or glob.glob("es-source/**/emulationstation", recursive=True)
-          if not es_binaries:
-              print("[!] ERROR: Compiled binary not found!")
-              sys.exit(1)
-
-          binary_path = es_binaries[0]
-          print(f"[+] Found compiled binary at {binary_path}")
-
-          with open(binary_path, "rb") as f:
-              bin_data = f.read()
-
-          custom_modes = [
-              "rainbow_wave", "strobe_party", "color_fade", "battery_status",
-              "fire", "police", "disco", "rainbow_chase",
-              "solid_gradient", "wave", "rainbow_full"
-          ]
-          stock_modes = ["static", "breathing", "rainbow", "red", "green", "blue", "yellow", "cyan", "magenta", "white"]
-          ota_strings = ["OTA Update", "update_check.sh", "runOtaUpdateScript"]
-
-          found_custom = [mode for mode in custom_modes if mode.encode("utf-8") in bin_data]
-          found_stock = [mode for mode in stock_modes if mode.encode("utf-8") in bin_data]
-          found_ota = [s for s in ota_strings if s.encode("utf-8") in bin_data]
-
-          log_content = "=== ARKOS4CLONE EMULATIONSTATION RGB MODE REPORT ===\n\n"
-          log_content += f"Binary Verified: {binary_path}\n"
-          log_content += f"Binary Size: {os.path.getsize(binary_path)} bytes\n\n"
-          log_content += "Custom LED Animation Options Verified in Binary:\n"
-          for mode in custom_modes:
-              status = "AVAILABLE [CONFIRMED]" if mode in found_custom else "MISSING [FAILED]"
-              log_content += f"  - {mode}: {status}\n"
-
-          log_content += "\nStock LED Modes Verified in Binary:\n"
-          for mode in stock_m
+      - name: Upload Built Binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: emulationstation-fcamod-m9pro
+          path: |
+            es-source/**/emulationstation*
+          retention-days: 14
+          if-no-files-found: error
