@@ -3,14 +3,90 @@ import glob
 import os
 import re
 import sys
+import stat
 
 SOURCE_ROOT = "es-source"
+SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
 
 CUSTOM_MODES = [
     "rainbow_wave", "strobe_party", "color_fade", "battery_status",
     "fire", "police", "disco", "rainbow_chase",
     "solid_gradient", "wave", "rainbow_full"
 ]
+
+DEFAULT_DAEMON_CONTENT = """#!/bin/bash
+# MCU LED Daemon for ArkOS / EmulationStation
+
+PIDFILE="/tmp/mcu_led_daemon.pid"
+if [ -f "$PIDFILE" ] && kill -0 $(cat "$PIDFILE") 2>/dev/null; then
+    exit 0
+fi
+echo $$ > "$PIDFILE"
+
+SETTINGS_FILE="/home/ark/.emulationstation/es_settings.xml"
+[ ! -f "$SETTINGS_FILE" ] && SETTINGS_FILE="/storage/.config/emulationstation/es_settings.xml"
+
+HUE=0
+
+while true; do
+    MODE="rainbow_wave"
+    if [ -f "$SETTINGS_FILE" ]; then
+        EXTRACTED=$(grep -oP 'string name="JoystickLEDMode" value="\\K[^"]+' "$SETTINGS_FILE" 2>/dev/null)
+        [ -n "$EXTRACTED" ] && MODE="$EXTRACTED"
+    fi
+
+    case "$MODE" in
+        "battery_status")
+            CAP=100
+            [ -f /sys/class/power_supply/battery/capacity ] && CAP=$(cat /sys/class/power_supply/battery/capacity)
+            if [ "$CAP" -ge 60 ]; then
+                /usr/bin/mcu_led 0 255 0
+            elif [ "$CAP" -ge 25 ]; then
+                /usr/bin/mcu_led 255 150 0
+            else
+                /usr/bin/mcu_led 255 0 0
+            fi
+            sleep 10
+            ;;
+        "strobe_party"|"police"|"disco")
+            R=$((RANDOM % 256))
+            G=$((RANDOM % 256))
+            B=$((RANDOM % 256))
+            /usr/bin/mcu_led $R $G $B
+            sleep 0.3
+            ;;
+        "fire")
+            R=$((RANDOM % 256))
+            G=$((RANDOM % 80))
+            /usr/bin/mcu_led $R $G 0
+            sleep 0.2
+            ;;
+        *)
+            HUE=$(( (HUE + 20) % 360 ))
+            /usr/bin/mcu_led 0 180 255
+            sleep 1
+            ;;
+    esac
+done
+"""
+
+def setup_daemon_script():
+    local_daemon = os.path.join(SCRIPT_DIR, "mcu_led_daemon.sh")
+    target_daemon = os.path.join(SOURCE_ROOT, "mcu_led_daemon.sh")
+    
+    content = DEFAULT_DAEMON_CONTENT
+    if os.path.isfile(local_daemon):
+        print(f"[*] Verwende mcu_led_daemon.sh aus: {local_daemon}")
+        with open(local_daemon, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+    else:
+        print("[*] Lokales mcu_led_daemon.sh nicht gefunden. Generiere Standard-Template...")
+
+    if os.path.exists(SOURCE_ROOT):
+        with open(target_daemon, "w", encoding="utf-8") as f:
+            f.write(content)
+        os.chmod(target_daemon, os.stat(target_daemon).st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+        print(f"[+] Daemon-Skript erfolgreich nach {target_daemon} geschrieben und ausführbar gemacht.")
 
 def find_main_entry(cpp_h_files, menu_cpp):
     def has_main(path):
@@ -203,10 +279,12 @@ def patch_menu_cpp(menu_cpp):
         f.write(m_content)
 
 def main():
+    setup_daemon_script()
     settings_cpp, main_cpp, menu_cpp = find_target_files()
     patch_main_cpp(main_cpp)
     patch_settings_cpp(settings_cpp)
     patch_menu_cpp(menu_cpp)
+    print("[+] Patchen der EmulationStation-Sourcedateien erfolgreich abgeschlossen.")
 
 if __name__ == "__main__":
     main()
