@@ -230,15 +230,26 @@ def patch_main_cpp(main_cpp):
 
     if "CustomMCUThread" not in main_content:
         main_content = THREAD_CODE + "\n" + main_content
-        main_content = re.sub(
-            r"(int\s+main\s*\([^\)]*\)\s*\{)",
-            r"\1\n    std::thread mcuThread(CustomMCUThread);\n    mcuThread.detach();\n"
-            r'    if (std::getenv("ES_RUN_OTA_ON_BOOT") != nullptr) {\n'
-            r"        runOtaUpdateScript();\n"
-            r"    }\n",
-            main_content,
-            count=1,
+        
+        # Sicherer Thread-Start NACH der System-Initialisierung (verhindert Bootloop/SegFault)
+        injection_code = (
+            "\n    // Injected MCU Thread & OTA Check\n"
+            "    std::thread mcuThread(CustomMCUThread);\n"
+            "    mcuThread.detach();\n"
+            '    if (std::getenv("ES_RUN_OTA_ON_BOOT") != nullptr) {\n'
+            "        runOtaUpdateScript();\n"
+            "    }\n"
         )
+        
+        if "SystemData::loadConfig" in main_content:
+            main_content = main_content.replace("SystemData::loadConfig", injection_code + "    SystemData::loadConfig", 1)
+        else:
+            main_content = re.sub(
+                r"(while\s*\(\s*!\s*window\.isDone\s*\(\s*\)\s*\))",
+                injection_code + r"\1",
+                main_content,
+                count=1
+            )
 
     with open(main_cpp, "w", encoding="utf-8") as f:
         f.write(main_content)
@@ -250,7 +261,6 @@ def patch_settings_cpp(settings_cpp):
     if any(m in s_content for m in CUSTOM_MODES):
         return
 
-    # KORREKTUR: Sicheres Einfügen vor dem schließenden '}' des C++ Arrays
     array_pattern = re.compile(r"(const\s+char\s*\*\s*[^;=\n]+\[\s*\]\s*=\s*\{[^}]*?\})", re.DOTALL)
     match = array_pattern.search(s_content)
     
