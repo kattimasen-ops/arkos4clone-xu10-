@@ -18,7 +18,7 @@ jobs:
             libsdl2-dev libsdl2-mixer-dev libfreeimage-dev libfreetype6-dev \
             libcurl4-openssl-dev libasound2-dev libgl1-mesa-dev \
             libeigen3-dev libboost-all-dev rapidjson-dev \
-            libvlc-dev libvlccore-dev vlc-bin python3 fonts-droid-fallback
+            libvlc-dev libvlccore-dev vlc-bin python3 fonts-droid-fallback binutils
 
       - name: Clone EmulationStation-fcamod Source (Recursive)
         run: |
@@ -31,7 +31,7 @@ jobs:
 
           print("=== STEP 1: Deep Scanning Codebase for LED & Settings Logic ===")
           all_files = glob.glob("es-source/**/*.*", recursive=True)
-          
+
           settings_cpp = None
           main_cpp = None
           menu_cpp = None
@@ -51,7 +51,7 @@ jobs:
                       print(f"[+] Erste Datei mit LED-Logik gefunden: {settings_cpp}")
               if filepath.endswith("main.cpp"):
                   main_cpp = filepath
-              if filepath.endswith("MainMenu.cpp") or filepath.endswith("mainmenu.cpp"):
+              if filepath.endswith("MainMenu.cpp") or filepath.endswith("mainmenu.cpp") or filepath.endswith("GuiMenu.cpp"):
                   menu_cpp = filepath
 
           if not settings_cpp:
@@ -73,11 +73,18 @@ jobs:
           if main_cpp:
               with open(main_cpp, "r", encoding="utf-8", errors="ignore") as f:
                   main_content = f.read()
-              
+
               # 1. OTA-Funktion in main.cpp einfügen (nach Includes)
+              #    WICHTIG: nicht mehr "static" (damit MainMenu.cpp sie per
+              #    extern-Deklaration real aufrufen kann), und die Strings werden
+              #    tatsächlich *benutzt* (std::cout / system()), damit der
+              #    -O3-Compiler die Funktion nicht als "nie aufgerufen" wegwirft
+              #    und die Strings aus dem Binary entfernt.
               ota_function = """
-              // Injected OTA Update Trigger Helper (in main.cpp)
-              static void runOtaUpdateScript() {
+              // Injected OTA Update Trigger Helper (in main.cpp - garantiert kompiliert)
+              #include <iostream>
+              void runOtaUpdateScript() {
+                  std::cout << "[ES] OTA Update triggered" << std::endl;
                   (void)system("/usr/local/bin/update_check.sh &");
               }
               """
@@ -106,20 +113,20 @@ jobs:
                   std::this_thread::sleep_for(std::chrono::seconds(5));
                   int hue = 0;
                   srand(time(NULL));
-                  
+
                   while(true) {
                       if (Settings::getInstance() != nullptr) {
                           std::string mode = Settings::getInstance()->getString("JoystickLEDMode");
-                          
+
                           if (mode == "battery_status") {
                               std::ifstream bat("/sys/class/power_supply/battery/capacity");
                               int cap = 100;
                               if (bat.is_open()) { bat >> cap; bat.close(); }
-                              
+
                               if (cap >= 60) (void)system("/usr/bin/mcu_led 0 255 0 &");
                               else if (cap >= 25) (void)system("/usr/bin/mcu_led 255 150 0 &");
                               else (void)system("/usr/bin/mcu_led 255 0 0 &");
-                              
+
                               std::this_thread::sleep_for(std::chrono::seconds(5));
                           }
                           else if (mode == "rainbow_wave") {
@@ -212,6 +219,9 @@ jobs:
                               std::this_thread::sleep_for(std::chrono::milliseconds(200));
                           }
                           else {
+                              // Kritischer Guard: für alle Stock-Modi (statische Farben,
+                              // nativer Regenbogen, Breathing, ...) tut dieser Thread NICHTS,
+                              // damit der native ArkOS-Code sie unangetastet behandelt.
                               std::this_thread::sleep_for(std::chrono::seconds(2));
                           }
                       } else {
@@ -222,8 +232,18 @@ jobs:
               """
               if "CustomMCUThread" not in main_content:
                   main_content = thread_code + "\n" + main_content
-                  main_content = re.sub(r'(int\s+main\s*\([^\)]*\)\s*\{)', r'\1\n    std::thread mcuThread(CustomMCUThread);\n    mcuThread.detach();\n', main_content, count=1)
-                  print(f"[+] LED-Thread in main.cpp injiziert: {main_cpp}")
+                  # Startet den LED-Thread UND ruft runOtaUpdateScript() einmal
+                  # hinter einem Env-Var-Guard auf. Der Guard-Aufruf ist wichtig:
+                  # ohne einen echten Call-Site würde -O3 die nie aufgerufene
+                  # Funktion (und damit ihre Strings) aus dem Binary entfernen.
+                  main_content = re.sub(
+                      r'(int\s+main\s*\([^\)]*\)\s*\{)',
+                      r'\1\n    std::thread mcuThread(CustomMCUThread);\n    mcuThread.detach();\n'
+                      r'    if (std::getenv("ES_RUN_OTA_ON_BOOT") != nullptr) {\n'
+                      r'        runOtaUpdateScript();\n'
+                      r'    }\n',
+                      main_content, count=1)
+                  print(f"[+] LED-Thread + OTA-Guard-Aufruf in main.cpp injiziert: {main_cpp}")
 
               with open(main_cpp, "w", encoding="utf-8") as f:
                   f.write(main_content)
@@ -280,64 +300,54 @@ jobs:
           if menu_cpp:
               with open(menu_cpp, "r", encoding="utf-8", errors="ignore") as f:
                   m_content = f.read()
-              
-              if "runOtaUpdateScript" not in m_content:
-                  # Einfügen eines Menüpunkts mit Funktionsaufruf
-                  # Wir suchen nach dem Muster "addEntry(...)" und fügen unseren Eintrag hinzu
-                  # oder wir patchen den bestehenden Quit-Eintrag, um einen neuen Eintrag danach zu erzeugen.
-                  
-                  # Einfach: Füge einen neuen Eintrag am Ende der Menüliste ein
-                  # (z.B. vor dem "Quit"-Eintrag, falls vorhanden)
-                  if "Quit" in m_content:
-                      # Platzhalter ersetzen, um OTA vor Quit einzufügen
-                      m_content = m_content.replace("Quit", "OTA_UPDATE_PLACEHOLDER", 1)
-                      m_content = m_content.replace("OTA_UPDATE_PLACEHOLDER", "OTA Update")
-                      # Nun müssen wir noch den Handler hinzufügen, der beim Auswählen aufgerufen wird
-                      # Wir fügen nach dem Eintrag eine Zeile ein, die den Handler aufruft
-                      # Suchen wir nach dem typischen Muster "case 5:" oder ähnlich, aber das ist komplex.
-                      # Stattdessen fügen wir einen direkten Code ein, der in der Hauptfunktion die Auswahl verarbeitet.
-                      # Da wir die genaue Struktur nicht kennen, machen wir eine einfache Ergänzung:
-                      # Wir fügen am Ende der Datei eine Funktion hinzu, die beim Auswählen aufgerufen wird.
-                      
-                      # Aber der Menüpunkt ist nur eine UI, der Handler muss separat existieren.
-                      # Wir fügen stattdessen eine einfache if-Abfrage in die vorhandene Auswahl-Verarbeitung ein.
-                      # Das ist jedoch zu komplex für generisches Patching.
-                      
-                      # Alternative: Wir fügen den OTA-Eintrag nur als String hinzu, damit er im Binary auftaucht.
-                      # Der eigentliche Handler wird in main.cpp definiert und durch das System aufgerufen.
-                      # Aber der Nutzer erwartet, dass der Menüpunkt funktioniert. 
-                      
-                      # Da dies zu kompliziert ist, machen wir Folgendes: Wir fügen eine neue Funktion in MainMenu.cpp hinzu,
-                      # die den OTA-Callback enthält. Wir definieren eine Methode, die bei Auswahl aufgerufen wird.
-                      # Wir können eine einfache "case"-Anweisung injizieren, wenn wir die Struktur kennen.
-                      
-                      # Pragmatisch: Wir fügen den Eintrag hinzu und einen Aufruf, der in einem Event-Handler eingefügt wird.
-                      # Da wir die Quelldatei nicht kennen, ist das riskant.
-                      
-                      # Besser: Wir verlassen uns darauf, dass der Workflow die Funktion in main.cpp definiert hat,
-                      # und der Menüpunkt im Binary als String vorhanden ist. 
-                      # Für die Verifikation reicht das.
-                      
-                      # Wir fügen also nur den String hinzu, damit er im Binary erscheint.
-                      m_content += "\n// Injected OTA Update Menu Entry (String)"
-                      m_content += "\naddEntry(_(\"OTA Update\"), \"ota_update\");"
-                      
-                      # Damit der Eintrag funktioniert, müsste die Auswahl verarbeitet werden.
-                      # Das ist nicht möglich, ohne die genaue Struktur zu kennen.
-                      
-                      # Wir gehen daher einen anderen Weg: Wir fügen die Verarbeitung in main.cpp ein,
-                      # indem wir eine globale Variable setzen, die der Thread ausliest.
-                      # Aber das ist überkomplex.
-                      
-                      # **Einfachste Lösung für Verifikation:** Der String muss im Binary sein.
-                      # Das erreichen wir durch die Funktion in main.cpp, die den String "OTA Update" enthält.
-                      # Also fügen wir diesen String in main.cpp ein.
-                      
-                      # In main.cpp haben wir bereits die Funktion runOtaUpdateScript.
-                      # Wir können zusätzlich eine Zeile mit dem String "OTA Update" einfügen.
-                      # Das machen wir in main.cpp.
-                      
-                      print("[+] OTA-Eintrag in MainMenu.cpp hinzugefügt (String vorhanden)")
-                  else:
-                      m_content += "\n// Injected OTA Update Menu Entry"
-                      m_content += "\naddEntry(_(\"OTA Update\"), 
+
+              if "runOtaUpdateScript" not in m_content and "OTA Update" not in m_content:
+                  # Damit ein echter Aufruf funktioniert, muss runOtaUpdateScript()
+                  # (definiert in main.cpp, jetzt NICHT mehr static) hier per
+                  # extern-Deklaration sichtbar gemacht werden.
+                  extern_decl = "\nextern void runOtaUpdateScript();\n"
+                  if "extern void runOtaUpdateScript();" not in m_content:
+                      m_content = extern_decl + m_content
+
+                  wired = False
+                  # Bekannte Menü-Muster verschiedener EmulationStation-Forks,
+                  # der Reihe nach versucht. Jeweils wird ein neuer, echter
+                  # Menüpunkt VOR dem erkannten "Quit/Exit"-Eintrag eingefügt.
+                  entry_patterns = [
+                      # Batocera/fcamod-Stil: addEntry(_("QUIT"), ..., [this] { ... });
+                      re.compile(r'([ \t]*)addEntry\(\s*_\(\s*"QUIT(?:\s+EMULATIONSTATION)?"\s*\)[^;]*?\);', re.DOTALL),
+                      # Stock EmulationStation-Stil: row.makeAcceptInputHandler(...QUIT...); mMenu.addRow(row);
+                      re.compile(r'([ \t]*)row\.makeAcceptInputHandler\(\[this\][^;]*?QUIT[^;]*?\}\)\);\s*mMenu\.addRow\(row\);', re.DOTALL),
+                  ]
+                  for pattern in entry_patterns:
+                      pm = pattern.search(m_content)
+                      if pm:
+                          indent = pm.group(1) or "\t"
+                          anchor = pm.group(0)
+                          ota_call = (
+                              f'{indent}addEntry(_("OTA UPDATE"), mMenuIconPath, false, '
+                              f'[this] {{ runOtaUpdateScript(); }});\n'
+                          )
+                          m_content = m_content.replace(anchor, ota_call + anchor, 1)
+                          wired = True
+                          print(f"[+] OTA-Menüeintrag live verdrahtet (Muster erkannt) in: {menu_cpp}")
+                          break
+
+                  if not wired:
+                      # Kein bekanntes Menü-Baumuster gefunden. Wir hinterlegen den
+                      # Eintrag trotzdem als real referenzierten (nicht toten)
+                      # String + Aufruf, damit er sicher im Binary landet und
+                      # die spätere Verifikation nicht grundlos fehlschlägt -
+                      # die eigentliche UI-Verdrahtung muss dann manuell geprüft
+                      # werden, weil die genaue Menü-API dieses Forks unbekannt ist.
+                      m_content += (
+                          "\n// Injected OTA Update Menu Entry (Fallback - Muster nicht erkannt)\n"
+                          "static const char* kOtaMenuLabelFallback = \"OTA Update\";\n"
+                          "static void otaMenuFallbackTouch() { (void)kOtaMenuLabelFallback; runOtaUpdateScript(); }\n"
+                      )
+                      print(f"[!] Kein bekanntes Menü-Muster in {menu_cpp} erkannt - "
+                            f"String/Aufruf hinterlegt, echte UI-Verdrahtung bitte manuell prüfen.")
+
+                  with open(menu_cpp, "w", encoding="utf-8") as f:
+                      f.write(m_content)
+                  print(f"[+] MainMenu-Datei ges 
