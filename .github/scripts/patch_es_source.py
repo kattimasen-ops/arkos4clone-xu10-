@@ -214,7 +214,8 @@ def patch_settings_cpp(settings_cpp):
     with open(settings_cpp, "r", encoding="utf-8", errors="ignore") as f:
         s_content = f.read()
 
-    if any(m in s_content for m in CUSTOM_MODES):
+    # Verwende eindeutige Markierung statt "any()", da Worte wie "fire" oder "wave" oft schon existieren
+    if "// INJECTED_CUSTOM_LED_MODES" in s_content or "strobe_party" in s_content:
         return
 
     array_pattern = re.compile(r"(const\s+char\s*\*\s*[^;=\n]+\[\s*\]\s*=\s*\{[^}]*?\})", re.DOTALL)
@@ -222,10 +223,10 @@ def patch_settings_cpp(settings_cpp):
 
     if match:
         array_text = match.group(0)
-        if any(k in array_text for k in ["static", "rainbow", "breathing"]):
+        if any(k in array_text for k in ["static", "rainbow", "breathing", "off", "on"]):
             closing_idx = array_text.rfind("}")
             insertion = ', "' + '", "'.join(CUSTOM_MODES) + '"'
-            new_array = array_text[:closing_idx] + insertion + array_text[closing_idx:]
+            new_array = array_text[:closing_idx] + insertion + array_text[closing_idx:] + " // INJECTED_CUSTOM_LED_MODES"
             s_content = s_content.replace(array_text, new_array, 1)
         else:
             match = None
