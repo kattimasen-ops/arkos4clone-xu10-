@@ -1,4 +1,4 @@
-name: Bastel ES with Full OTA & RGB LED UI Integration
+name: erstelle ES with Full OTA & RGB LED UI Integration
 
 on:
   workflow_dispatch:
@@ -8,16 +8,28 @@ permissions:
 
 jobs:
   build-es:
-    runs-on: ubuntu-latest
+    # Native arm64 hardware - free for public repositories, no QEMU needed.
+    # This replaces the earlier QEMU-emulated build, which crashed
+    # (cc1plus segfault) under heavy parallel -O3 C++ compilation - a
+    # known QEMU user-mode emulation weakness, not a code bug.
+    # NOTE: ubuntu-24.04-arm / ubuntu-22.04-arm runners only work on
+    # PUBLIC repositories on the free/Team plans. If this repo is ever
+    # made private, this job will fail to pick up a runner and you'd
+    # need to fall back to the QEMU approach or a self-hosted ARM runner.
+    runs-on: ubuntu-24.04-arm
 
     steps:
       - name: Checkout Repository (for the patcher/verifier scripts)
         uses: actions/checkout@v4
 
-      - name: Install Host Tooling (patch step + verify step only)
+      - name: Install Build Dependencies (native arm64 packages)
         run: |
           sudo apt-get update
-          sudo apt-get install -y python3 binutils git
+          sudo apt-get install -y build-essential cmake pkg-config git \
+            libsdl2-dev libsdl2-mixer-dev libfreeimage-dev libfreetype6-dev \
+            libcurl4-openssl-dev libasound2-dev libgl1-mesa-dev \
+            libeigen3-dev libboost-all-dev rapidjson-dev \
+            libvlc-dev libvlccore-dev vlc-bin python3 fonts-droid-fallback binutils
 
       - name: Clone EmulationStation-fcamod Source (Recursive)
         run: |
@@ -26,56 +38,32 @@ jobs:
       - name: Deep Scan Codebase & Auto-Integrate Custom LED Modes + OTA Menu
         run: python3 .github/scripts/patch_es_source.py
 
-      - name: Set up QEMU (for aarch64 emulation)
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
-
-      # IMPORTANT: ubuntu-latest runners are x86_64. The M9 Pro / RK3326 is
-      # aarch64 (Cortex-A35), and "-mcpu=cortex-a35 -mtune=cortex-a35" are
-      # ARM-only flags that the host's native x86_64 gcc cannot accept -
-      # that is exactly what the "bad value 'cortex-a35' for '-mtune='"
-      # error means. This step performs the actual compilation inside a
-      # QEMU-emulated aarch64 Ubuntu container, where apt installs real
-      # arm64 packages and gcc/g++ are genuine aarch64 compilers.
-      - name: Cross-Build EmulationStation Binary (aarch64 container)
-        uses: uraimo/run-on-arch-action@v2
-        with:
-          arch: aarch64
-          distro: ubuntu22.04
-          githubToken: ${{ github.token }}
-          install: |
-            apt-get update -q -y
-            apt-get install -q -y build-essential cmake pkg-config git curl \
-              libsdl2-dev libsdl2-mixer-dev libfreeimage-dev libfreetype6-dev \
-              libcurl4-openssl-dev libasound2-dev libgl1-mesa-dev \
-              libeigen3-dev libboost-all-dev rapidjson-dev \
-              libvlc-dev libvlccore-dev vlc-bin python3 fonts-droid-fallback
-          run: |
-            set -e
-            export CFLAGS="-mcpu=cortex-a35 -mtune=cortex-a35 -O3 -pipe -fno-strict-aliasing"
-            export CXXFLAGS="-mcpu=cortex-a35 -mtune=cortex-a35 -O3 -pipe -fno-strict-aliasing"
-            cd es-source
-
-            if [ -f premake5.lua ]; then
-              echo "[*] premake5.lua gefunden - baue mit Premake5 (aarch64)"
-              if ! command -v premake5 >/dev/null 2>&1; then
-                echo "[*] Kein premake5-Binary vorhanden - baue Premake5 aus dem Quellcode fuer aarch64"
-                git clone --depth 1 https://github.com/premake/premake-core.git /tmp/premake-core
-                make -C /tmp/premake-core -f Bootstrap.mak linux
-                cp /tmp/premake-core/bin/release/premake5 /usr/local/bin/premake5
-              fi
-              premake5 gmake2
-              make -j"$(nproc)" config=release CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS"
-            elif [ -f CMakeLists.txt ]; then
-              echo "[*] Kein premake5.lua gefunden - Fallback auf CMake"
-              mkdir -p build && cd build
-              cmake .. -DCMAKE_BUILD_TYPE=Release
-              make -j"$(nproc)"
-            else
-              echo "[!] Weder premake5.lua noch CMakeLists.txt gefunden - Build-System unbekannt. Abbruch."
-              exit 1
+      - name: Build EmulationStation Binary (native aarch64 compiler)
+        working-directory: es-source
+        env:
+          CFLAGS: "-mcpu=cortex-a35 -mtune=cortex-a35 -O3 -pipe -fno-strict-aliasing"
+          CXXFLAGS: "-mcpu=cortex-a35 -mtune=cortex-a35 -O3 -pipe -fno-strict-aliasing"
+        run: |
+          set -e
+          if [ -f premake5.lua ]; then
+            echo "[*] premake5.lua gefunden - baue mit Premake5"
+            if ! command -v premake5 >/dev/null 2>&1; then
+              echo "[*] Kein premake5-Binary vorhanden - baue Premake5 aus dem Quellcode fuer aarch64"
+              git clone --depth 1 https://github.com/premake/premake-core.git /tmp/premake-core
+              make -C /tmp/premake-core -f Bootstrap.mak linux
+              sudo cp /tmp/premake-core/bin/release/premake5 /usr/local/bin/premake5
             fi
+            premake5 gmake2
+            make -j"$(nproc)" config=release CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS"
+          elif [ -f CMakeLists.txt ]; then
+            echo "[*] Kein premake5.lua gefunden - Fallback auf CMake"
+            mkdir -p build && cd build
+            cmake .. -DCMAKE_BUILD_TYPE=Release
+            make -j"$(nproc)"
+          else
+            echo "[!] Weder premake5.lua noch CMakeLists.txt gefunden - Build-System unbekannt. Abbruch."
+            exit 1
+          fi
 
       - name: Verify Custom Strings in Compiled Binary
         run: python3 .github/scripts/verify_es_binary.py
