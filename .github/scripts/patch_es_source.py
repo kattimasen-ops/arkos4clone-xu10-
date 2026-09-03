@@ -139,31 +139,22 @@ SAFE_LAUNCH_CODE = """// === ES_CUSTOM_PATCH_START ===
 void runOtaUpdateScript();
 void launchLedDaemonOnce();
 
-namespace EsCustomPatch {
-    static const char* const g_custom_led_modes[] = {
+extern "C" {
+    __attribute__((used))
+    const char* const g_es_led_modes_keep_strings[] = {
         "rainbow_wave", "strobe_party", "color_fade", "battery_status",
         "fire", "police", "disco", "rainbow_chase",
         "solid_gradient", "wave", "rainbow_full"
     };
-
-    static void keepLedStringsInBinary() {
-        volatile const char* dummy = g_custom_led_modes[0];
-        for (size_t i = 0; i < sizeof(g_custom_led_modes) / sizeof(g_custom_led_modes[0]); ++i) {
-            dummy = g_custom_led_modes[i];
-        }
-        (void)dummy;
-    }
 }
 
 void runOtaUpdateScript() {
-    EsCustomPatch::keepLedStringsInBinary();
     std::cout << "[ES] OTA Update triggered" << std::endl;
     int res = std::system("/usr/local/bin/update_check.sh &");
     (void)res;
 }
 
 void launchLedDaemonOnce() {
-    EsCustomPatch::keepLedStringsInBinary();
     std::cout << "[ES] Launching MCU LED Daemon process..." << std::endl;
     int res = std::system("/usr/local/bin/mcu_led_daemon.sh &");
     (void)res;
@@ -178,7 +169,6 @@ def patch_main_cpp(main_cpp):
     with open(main_cpp, "r", encoding="utf-8", errors="ignore") as f:
         main_content = f.read()
 
-    # Säuberung aller bisherigen Custom-Patches
     main_content = re.sub(r'// === ES_CUSTOM_PATCH_START ===.*?// === ES_CUSTOM_PATCH_END ===\n?', '', main_content, flags=re.DOTALL)
     main_content = re.sub(r'// Safe External Daemon.*?\n\n', '', main_content, flags=re.DOTALL)
     main_content = re.sub(r'// Forward Declarations.*?\n\n', '', main_content, flags=re.DOTALL)
@@ -186,7 +176,6 @@ def patch_main_cpp(main_cpp):
     main_content = re.sub(r'(?:inline\s+)?void runOtaUpdateScript\(\)\s*\{.*?\n\}', '', main_content, flags=re.DOTALL)
     main_content = re.sub(r'(?:inline\s+)?void launchLedDaemonOnce\(\)\s*\{.*?\n\}', '', main_content, flags=re.DOTALL)
 
-    # Injektion direkt am Dateianfang
     main_content = SAFE_LAUNCH_CODE.strip() + "\n\n" + main_content
 
     if "launchLedDaemonOnce();" not in main_content:
