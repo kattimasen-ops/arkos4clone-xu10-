@@ -78,9 +78,16 @@ def find_target_files():
 OTA_FUNCTION = """
 // Injected OTA Update Trigger Helper
 #include <iostream>
+#include <cstdlib>
+
+static void safeSystemCall(const char* cmd) {
+    int res = system(cmd);
+    (void)res;
+}
+
 void runOtaUpdateScript() {
     std::cout << "[ES] OTA Update triggered" << std::endl;
-    (void)system("/usr/local/bin/update_check.sh &");
+    safeSystemCall("/usr/local/bin/update_check.sh &");
 }
 """
 
@@ -93,6 +100,11 @@ THREAD_CODE = r"""
 #include <string>
 #include <ctime>
 #include "Settings.h"
+
+static void safeSystemCmd(const std::string& cmd) {
+    int res = system(cmd.c_str());
+    (void)res;
+}
 
 void CustomMCUThread() {
     std::this_thread::sleep_for(std::chrono::seconds(5));
@@ -108,9 +120,9 @@ void CustomMCUThread() {
                 int cap = 100;
                 if (bat.is_open()) { bat >> cap; bat.close(); }
 
-                if (cap >= 60) (void)system("/usr/bin/mcu_led 0 255 0 &");
-                else if (cap >= 25) (void)system("/usr/bin/mcu_led 255 150 0 &");
-                else (void)system("/usr/bin/mcu_led 255 0 0 &");
+                if (cap >= 60) safeSystemCmd("/usr/bin/mcu_led 0 255 0 &");
+                else if (cap >= 25) safeSystemCmd("/usr/bin/mcu_led 255 150 0 &");
+                else safeSystemCmd("/usr/bin/mcu_led 255 0 0 &");
 
                 std::this_thread::sleep_for(std::chrono::seconds(5));
             }
@@ -120,16 +132,15 @@ void CustomMCUThread() {
                 int r = (int)((std::sin(rad) + 1.0) * 127.5);
                 int g = (int)((std::sin(rad + 2.094) + 1.0) * 127.5);
                 int b = (int)((std::sin(rad + 4.188) + 1.0) * 127.5);
-                std::string cmd = "/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &";
-                (void)system(cmd.c_str());
+                safeSystemCmd("/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &");
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
             else if (mode == "strobe_party") {
-                (void)system("/usr/bin/mcu_led 255 0 0 &");
+                safeSystemCmd("/usr/bin/mcu_led 255 0 0 &");
                 std::this_thread::sleep_for(std::chrono::milliseconds(120));
-                (void)system("/usr/bin/mcu_led 0 255 0 &");
+                safeSystemCmd("/usr/bin/mcu_led 0 255 0 &");
                 std::this_thread::sleep_for(std::chrono::milliseconds(120));
-                (void)system("/usr/bin/mcu_led 0 0 255 &");
+                safeSystemCmd("/usr/bin/mcu_led 0 0 255 &");
                 std::this_thread::sleep_for(std::chrono::milliseconds(120));
             }
             else if (mode == "color_fade") {
@@ -138,29 +149,26 @@ void CustomMCUThread() {
                 int r = (int)((std::sin(rad) + 1.0) * 127.5);
                 int g = (int)((std::sin(rad + 2.094) + 1.0) * 127.5);
                 int b = (int)((std::sin(rad + 4.188) + 1.0) * 127.5);
-                std::string cmd = "/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &";
-                (void)system(cmd.c_str());
+                safeSystemCmd("/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &");
                 std::this_thread::sleep_for(std::chrono::milliseconds(250));
             }
             else if (mode == "fire") {
                 int r = rand() % 256;
                 int g = rand() % 80;
                 int b = 0;
-                std::string cmd = "/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &";
-                (void)system(cmd.c_str());
+                safeSystemCmd("/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &");
                 std::this_thread::sleep_for(std::chrono::milliseconds(40));
             }
             else if (mode == "police") {
-                (void)system("/usr/bin/mcu_led 255 0 0 &");
+                safeSystemCmd("/usr/bin/mcu_led 255 0 0 &");
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                (void)system("/usr/bin/mcu_led 0 0 255 &");
+                safeSystemCmd("/usr/bin/mcu_led 0 0 255 &");
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
             else if (mode == "disco") {
                 int colors[6][3] = {{255,0,0},{0,255,0},{0,0,255},{255,255,0},{255,0,255},{0,255,255}};
                 int idx = rand() % 6;
-                std::string cmd = "/usr/bin/mcu_led " + std::to_string(colors[idx][0]) + " " + std::to_string(colors[idx][1]) + " " + std::to_string(colors[idx][2]) + " &";
-                (void)system(cmd.c_str());
+                safeSystemCmd("/usr/bin/mcu_led " + std::to_string(colors[idx][0]) + " " + std::to_string(colors[idx][1]) + " " + std::to_string(colors[idx][2]) + " &");
                 std::this_thread::sleep_for(std::chrono::milliseconds(120));
             }
             else if (mode == "rainbow_chase") {
@@ -169,8 +177,7 @@ void CustomMCUThread() {
                 int r = (int)((std::sin(rad) + 1.0) * 127.5);
                 int g = (int)((std::sin(rad + 2.094) + 1.0) * 127.5);
                 int b = (int)((std::sin(rad + 4.188) + 1.0) * 127.5);
-                std::string cmd = "/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &";
-                (void)system(cmd.c_str());
+                safeSystemCmd("/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &");
                 std::this_thread::sleep_for(std::chrono::milliseconds(80));
             }
             else if (mode == "solid_gradient") {
@@ -179,8 +186,7 @@ void CustomMCUThread() {
                 int r = (int)((std::sin(rad) + 1.0) * 127.5);
                 int g = (int)((std::sin(rad + 2.094) + 1.0) * 127.5);
                 int b = (int)((std::sin(rad + 4.188) + 1.0) * 127.5);
-                std::string cmd = "/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &";
-                (void)system(cmd.c_str());
+                safeSystemCmd("/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &");
                 std::this_thread::sleep_for(std::chrono::milliseconds(500));
             }
             else if (mode == "wave") {
@@ -189,8 +195,7 @@ void CustomMCUThread() {
                 int r = (int)((std::sin(rad) + 1.0) * 127.5);
                 int g = (int)((std::sin(rad + 2.094) + 1.0) * 127.5);
                 int b = (int)((std::sin(rad + 4.188) + 1.0) * 127.5);
-                std::string cmd = "/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &";
-                (void)system(cmd.c_str());
+                safeSystemCmd("/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &");
                 std::this_thread::sleep_for(std::chrono::milliseconds(150));
             }
             else if (mode == "rainbow_full") {
@@ -199,8 +204,7 @@ void CustomMCUThread() {
                 int r = (int)((std::sin(rad) + 1.0) * 127.5);
                 int g = (int)((std::sin(rad + 2.094) + 1.0) * 127.5);
                 int b = (int)((std::sin(rad + 4.188) + 1.0) * 127.5);
-                std::string cmd = "/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &";
-                (void)system(cmd.c_str());
+                safeSystemCmd("/usr/bin/mcu_led " + std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " &");
                 std::this_thread::sleep_for(std::chrono::milliseconds(200));
             }
             else {
@@ -231,7 +235,6 @@ def patch_main_cpp(main_cpp):
     if "CustomMCUThread" not in main_content:
         main_content = THREAD_CODE + "\n" + main_content
         
-        # Sicherer Thread-Start NACH der System-Initialisierung (verhindert Bootloop/SegFault)
         injection_code = (
             "\n    // Injected MCU Thread & OTA Check\n"
             "    std::thread mcuThread(CustomMCUThread);\n"
