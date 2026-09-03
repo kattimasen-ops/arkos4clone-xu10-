@@ -1,4 +1,4 @@
-name: fuck ES with Full OTA & RGB LED UI Integration
+name: Bastel ES with Full OTA & RGB LED UI Integration
 
 on:
   workflow_dispatch:
@@ -39,7 +39,7 @@ jobs:
         working-directory: es-source
         env:
           CFLAGS: "-mcpu=cortex-a35 -mtune=cortex-a35 -O3 -pipe -fno-strict-aliasing -Wno-unused-result -Wno-error"
-          CXXFLAGS: "-mcpu=cortex-a35 -mtune=cortex-a35 -O3 -pipe -fno-strict-aliasing -static-libgcc -static-libstdc++ -Wno-unused-result -Wno-error"
+          CXXFLAGS: "-mcpu=cortex-a35 -mtune=cortex-a35 -O3 -pipe -std=c++17 -fno-strict-aliasing -static-libgcc -static-libstdc++ -Wno-unused-result -Wno-error"
           LDFLAGS: "-static-libgcc -static-libstdc++"
         run: |
           set -e
@@ -54,7 +54,7 @@ jobs:
             make -j"$(nproc)" config=release CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS" LDFLAGS="$LDFLAGS"
           elif [ -f CMakeLists.txt ]; then
             mkdir -p build && cd build
-            cmake .. -DCMAKE_BUILD_TYPE=Release
+            cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_STANDARD=17
             make -j"$(nproc)"
           else
             echo "[!] Kein unterstütztes Build-System gefunden."
