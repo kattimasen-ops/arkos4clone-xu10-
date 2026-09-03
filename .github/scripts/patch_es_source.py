@@ -1,14 +1,4 @@
 #!/usr/bin/env python3
-"""
-Deep-scans the EmulationStation-fcamod source tree and injects:
-  - the OTA update helper + a real (non-eliminable) call site in main.cpp
-  - the custom joystick RGB LED mode thread in main.cpp
-  - the custom LED mode strings into the settings source
-  - a best-effort, real "OTA Update" menu entry wired to runOtaUpdateScript()
-
-Run from the repository root, with the cloned source at ./es-source
-(matches the "Clone EmulationStation-fcamod Source" workflow step).
-"""
 import glob
 import os
 import re
@@ -22,24 +12,7 @@ CUSTOM_MODES = [
     "solid_gradient", "wave", "rainbow_full"
 ]
 
-
 def find_main_entry(cpp_h_files, menu_cpp):
-    """Find the file that actually contains the emulationstation executable's
-    entry point.
-
-    A naive "any file named main.cpp" search is unsafe here: the repo is
-    cloned with --recursive, so a vendored submodule/dependency can easily
-    ship its own unrelated main.cpp (for its own tests/examples). Patching
-    that file compiles fine but the linker never pulls its .o into the
-    "emulationstation" target -> "undefined reference to runOtaUpdateScript()".
-
-    Strategy, most to least confident:
-      1. A file literally named main.cpp, inside the same src/ subtree as
-         GuiMenu.cpp, that actually contains "int main(".
-      2. Any file named main.cpp anywhere that contains "int main(".
-      3. Any .cpp file at all that contains "int main(" (covers forks where
-         the entry point isn't named main.cpp).
-    """
     def has_main(path):
         try:
             with open(path, "r", encoding="utf-8", errors="ignore") as f:
@@ -51,30 +24,25 @@ def find_main_entry(cpp_h_files, menu_cpp):
     if menu_cpp:
         parts = menu_cpp.replace(os.sep, "/").split("/")
         if "src" in parts:
-            search_root = "/".join(parts[: parts.index("src") + 1])  # e.g. .../es-app/src
+            search_root = "/".join(parts[: parts.index("src") + 1])
 
     if search_root:
         for filepath in cpp_h_files:
             fp = filepath.replace(os.sep, "/")
             if fp.startswith(search_root + "/") and os.path.basename(fp) == "main.cpp" and has_main(filepath):
-                print(f"[+] main.cpp im selben Source-Baum wie GuiMenu.cpp gefunden (sicherste Wahl): {filepath}")
                 return filepath
 
     for filepath in cpp_h_files:
         if os.path.basename(filepath) == "main.cpp" and has_main(filepath):
-            print(f"[+] main.cpp mit echtem int main() gefunden (Fallback 1): {filepath}")
             return filepath
 
     for filepath in cpp_h_files:
         if filepath.endswith(".cpp") and has_main(filepath):
-            print(f"[+] Datei mit int main() gefunden, ungewoehnlicher Dateiname (Fallback 2): {filepath}")
             return filepath
 
     return None
 
-
 def find_target_files():
-    print("=== STEP 1: Deep Scanning Codebase for LED & Settings Logic ===")
     all_files = glob.glob(os.path.join(SOURCE_ROOT, "**", "*.*"), recursive=True)
     cpp_h_files = [f for f in all_files if f.endswith((".cpp", ".h"))]
 
@@ -91,7 +59,6 @@ def find_target_files():
         if "JoystickLEDMode" in content or "JoystickLED" in content or "mcu_led" in content:
             if not settings_cpp:
                 settings_cpp = filepath
-                print(f"[+] Erste Datei mit LED-Logik gefunden: {settings_cpp}")
         if filepath.endswith("MainMenu.cpp") or filepath.endswith("mainmenu.cpp") or filepath.endswith("GuiMenu.cpp"):
             menu_cpp = filepath
 
@@ -99,25 +66,17 @@ def find_target_files():
         for filepath in cpp_h_files:
             if "GuiSettings" in filepath and filepath.endswith(".cpp"):
                 settings_cpp = filepath
-                print(f"[+] Fallback Settings-Datei gefunden: {settings_cpp}")
                 break
 
     if not settings_cpp:
         print("[!] Keine passende Einstellungsdatei gefunden. Abbruch.")
         sys.exit(1)
 
-    # menu_cpp is resolved first so main.cpp detection can anchor on its
-    # source subtree - see find_main_entry() for why that matters.
     main_cpp = find_main_entry(cpp_h_files, menu_cpp)
-
-    print(f"[+] Ziel-Datei (Settings): {settings_cpp}")
-    print(f"[+] Ziel-Datei (Main.cpp): {main_cpp}")
-    print(f"[+] Ziel-Datei (MainMenu): {menu_cpp}")
     return settings_cpp, main_cpp, menu_cpp
 
-
 OTA_FUNCTION = """
-// Injected OTA Update Trigger Helper (in main.cpp - garantiert kompiliert)
+// Injected OTA Update Trigger Helper
 #include <iostream>
 void runOtaUpdateScript() {
     std::cout << "[ES] OTA Update triggered" << std::endl;
@@ -245,9 +204,6 @@ void CustomMCUThread() {
                 std::this_thread::sleep_for(std::chrono::milliseconds(200));
             }
             else {
-                // Kritischer Guard: fuer alle Stock-Modi (statische Farben,
-                // nativer Regenbogen, Breathing, ...) tut dieser Thread NICHTS,
-                // damit der native ArkOS-Code sie unangetastet behandelt.
                 std::this_thread::sleep_for(std::chrono::seconds(2));
             }
         } else {
@@ -257,10 +213,8 @@ void CustomMCUThread() {
 }
 """
 
-
 def patch_main_cpp(main_cpp):
     if not main_cpp:
-        print("[!] main.cpp nicht gefunden - OTA und Thread nicht injiziert!")
         sys.exit(1)
 
     with open(main_cpp, "r", encoding="utf-8", errors="ignore") as f:
@@ -273,14 +227,9 @@ def patch_main_cpp(main_cpp):
             main_content = main_content[:last_idx] + "\n" + OTA_FUNCTION + main_content[last_idx:]
         else:
             main_content = OTA_FUNCTION + "\n" + main_content
-        print(f"[+] OTA-Funktion in main.cpp injiziert: {main_cpp}")
 
     if "CustomMCUThread" not in main_content:
         main_content = THREAD_CODE + "\n" + main_content
-        # Startet den LED-Thread UND ruft runOtaUpdateScript() einmal hinter
-        # einem Env-Var-Guard auf. Der echte Aufruf ist wichtig: ohne ihn
-        # koennte -O3 die nie aufgerufene Funktion (und ihre Strings) aus
-        # dem Binary entfernen.
         main_content = re.sub(
             r"(int\s+main\s*\([^\)]*\)\s*\{)",
             r"\1\n    std::thread mcuThread(CustomMCUThread);\n    mcuThread.detach();\n"
@@ -290,75 +239,53 @@ def patch_main_cpp(main_cpp):
             main_content,
             count=1,
         )
-        print(f"[+] LED-Thread + OTA-Guard-Aufruf in main.cpp injiziert: {main_cpp}")
 
     with open(main_cpp, "w", encoding="utf-8") as f:
         f.write(main_content)
-    print(f"[+] main.cpp gespeichert: {main_cpp}")
-
 
 def patch_settings_cpp(settings_cpp):
     with open(settings_cpp, "r", encoding="utf-8", errors="ignore") as f:
         s_content = f.read()
 
-    inserted_ui = False
-    array_pattern = re.compile(r"(const\s+char\s*\*\s*[^;]*\[\s*\]\s*=\s*\{[^}]*\})", re.DOTALL)
-    for m in array_pattern.finditer(s_content):
-        array_text = m.group(0)
-        if "static" in array_text or "rainbow" in array_text or "breathing" in array_text:
-            insertion = '", "'.join(CUSTOM_MODES)
-            stripped = array_text.rstrip()
-            if stripped.endswith('"'):
-                s_content = s_content.replace(array_text, stripped[:-1] + f', "{insertion}"' + stripped[-1:], 1)
-            else:
-                s_content = s_content.replace(array_text, stripped + f', "{insertion}"', 1)
-            print(f"[+] LED Modi in Array injiziert: {settings_cpp}")
-            inserted_ui = True
-            break
+    if any(m in s_content for m in CUSTOM_MODES):
+        return
 
-    if not inserted_ui:
+    # KORREKTUR: Sicheres Einfügen vor dem schließenden '}' des C++ Arrays
+    array_pattern = re.compile(r"(const\s+char\s*\*\s*[^;=\n]+\[\s*\]\s*=\s*\{[^}]*?\})", re.DOTALL)
+    match = array_pattern.search(s_content)
+    
+    if match:
+        array_text = match.group(0)
+        if any(k in array_text for k in ["static", "rainbow", "breathing"]):
+            closing_idx = array_text.rfind("}")
+            insertion = ', "' + '", "'.join(CUSTOM_MODES) + '"'
+            new_array = array_text[:closing_idx] + insertion + array_text[closing_idx:]
+            s_content = s_content.replace(array_text, new_array, 1)
+        else:
+            match = None
+
+    if not match:
         if '"static"' in s_content:
             s_content = s_content.replace('"static"', '"static", "' + '", "'.join(CUSTOM_MODES) + '"', 1)
-            print(f"[+] LED Modi nach 'static' eingefuegt: {settings_cpp}")
-            inserted_ui = True
         elif '"rainbow"' in s_content:
             s_content = s_content.replace('"rainbow"', '"rainbow", "' + '", "'.join(CUSTOM_MODES) + '"', 1)
-            print(f"[+] LED Modi nach 'rainbow' eingefuegt: {settings_cpp}")
-            inserted_ui = True
-
-    if not inserted_ui:
-        fallback_block = "\n// Injected custom LED mode strings for verification\n"
-        fallback_block += 'const char* CUSTOM_LED_MODES[] = {"' + '", "'.join(CUSTOM_MODES) + '"};\n'
-        s_content += fallback_block
-        print(f"[+] Fallback-Array fuer LED Modi hinzugefuegt: {settings_cpp}")
 
     with open(settings_cpp, "w", encoding="utf-8") as f:
         f.write(s_content)
-    print(f"[+] Settings-Datei gepatcht: {settings_cpp}")
-
 
 ENTRY_PATTERNS = [
-    # Batocera/fcamod-Stil: addEntry(_("QUIT"), ..., [this] { ... });
     re.compile(r'([ \t]*)addEntry\(\s*_\(\s*"QUIT(?:\s+EMULATIONSTATION)?"\s*\)[^;]*?\);', re.DOTALL),
-    # Stock EmulationStation-Stil: row.makeAcceptInputHandler(...QUIT...); mMenu.addRow(row);
     re.compile(r"([ \t]*)row\.makeAcceptInputHandler\(\[this\][^;]*?QUIT[^;]*?\}\)\);\s*mMenu\.addRow\(row\);", re.DOTALL),
 ]
 
-
 def patch_menu_cpp(menu_cpp):
     if not menu_cpp:
-        print(
-            "[!] Keine MainMenu/GuiMenu-Datei gefunden - OTA-Menuepunkt konnte nicht "
-            "verdrahtet werden. Der Trigger bleibt ueber main.cpp verfuegbar "
-            "(ES_RUN_OTA_ON_BOOT), aber ohne UI-Eintrag."
-        )
         return
 
     with open(menu_cpp, "r", encoding="utf-8", errors="ignore") as f:
         m_content = f.read()
 
     if "runOtaUpdateScript" in m_content or "OTA Update" in m_content:
-        print(f"[i] OTA-Eintrag bereits vorhanden in {menu_cpp}, ueberspringe.")
         return
 
     if "extern void runOtaUpdateScript();" not in m_content:
@@ -370,47 +297,26 @@ def patch_menu_cpp(menu_cpp):
         if pm:
             indent = pm.group(1) or "\t"
             anchor = pm.group(0)
-            # Real signature confirmed by the compiler for this fork:
-            #   void addEntry(std::string name, bool add_arrow,
-            #                 const std::function<void()>& func,
-            #                 const std::string iconName = "");
-            # i.e. (label, add_arrow_bool, lambda, iconName) - NOT
-            # (label, icon, bool, lambda) as earlier versions guessed.
-            # "false" for add_arrow matches how the QUIT entry we anchor on
-            # is written (an action entry, not a submenu opener), and the
-            # trailing iconName is left at its default.
-            ota_call = (
-                f'{indent}addEntry(_("OTA UPDATE"), false, '
-                f"[this] {{ runOtaUpdateScript(); }});\n"
-            )
+            ota_call = f'{indent}addEntry(_("OTA UPDATE"), false, [this] {{ runOtaUpdateScript(); }});\n'
             m_content = m_content.replace(anchor, ota_call + anchor, 1)
             wired = True
-            print(f"[+] OTA-Menueeintrag live verdrahtet (Muster erkannt) in: {menu_cpp}")
             break
 
     if not wired:
         m_content += (
-            "\n// Injected OTA Update Menu Entry (Fallback - Muster nicht erkannt)\n"
+            "\n// Injected OTA Update Menu Entry (Fallback)\n"
             'static const char* kOtaMenuLabelFallback = "OTA Update";\n'
             "static void otaMenuFallbackTouch() { (void)kOtaMenuLabelFallback; runOtaUpdateScript(); }\n"
-        )
-        print(
-            f"[!] Kein bekanntes Menue-Muster in {menu_cpp} erkannt - "
-            f"String/Aufruf hinterlegt, echte UI-Verdrahtung bitte manuell pruefen."
         )
 
     with open(menu_cpp, "w", encoding="utf-8") as f:
         f.write(m_content)
-    print(f"[+] MainMenu-Datei gespeichert: {menu_cpp}")
-
 
 def main():
     settings_cpp, main_cpp, menu_cpp = find_target_files()
     patch_main_cpp(main_cpp)
     patch_settings_cpp(settings_cpp)
     patch_menu_cpp(menu_cpp)
-    print("=== STEP 1 ABGESCHLOSSEN ===")
-
 
 if __name__ == "__main__":
     main()
