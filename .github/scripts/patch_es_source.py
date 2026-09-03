@@ -6,7 +6,7 @@ import sys
 import stat
 
 SOURCE_ROOT = "es-source"
-SCRIPT_DIR = os.path.dirname(os.realpath(__file__))
+SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
 
 CUSTOM_MODES = [
     "rainbow_wave", "strobe_party", "color_fade", "battery_status",
