@@ -277,16 +277,10 @@ def patch_settings_cpp(settings_cpp):
             inserted_ui = True
 
     if not inserted_ui:
-        # Fallback: Eigene Definition, die durch eine Dummy-Funktion referenziert wird,
-        # damit sie nicht entfernt werden kann.
-        fallback_block = """
-        // Injected custom LED mode strings for verification (referenced below)
-        const char* CUSTOM_LED_MODES[] = {""" + '", "'.join(CUSTOM_MODES) + """};
-        // Referenz, damit der Linker das Array nicht wegoptimiert
-        void custom_led_modes_ref() { (void)CUSTOM_LED_MODES; }
-        """
+        fallback_block = "\n// Injected custom LED mode strings for verification\n"
+        fallback_block += 'const char* CUSTOM_LED_MODES[] = {"' + '", "'.join(CUSTOM_MODES) + '"};\n'
         s_content += fallback_block
-        print(f"[+] Fallback-Array fuer LED Modi hinzugefuegt (und referenziert): {settings_cpp}")
+        print(f"[+] Fallback-Array fuer LED Modi hinzugefuegt: {settings_cpp}")
 
     with open(settings_cpp, "w", encoding="utf-8") as f:
         f.write(s_content)
@@ -298,9 +292,6 @@ ENTRY_PATTERNS = [
     re.compile(r'([ \t]*)addEntry\(\s*_\(\s*"QUIT(?:\s+EMULATIONSTATION)?"\s*\)[^;]*?\);', re.DOTALL),
     # Stock EmulationStation-Stil: row.makeAcceptInputHandler(...QUIT...); mMenu.addRow(row);
     re.compile(r"([ \t]*)row\.makeAcceptInputHandler\(\[this\][^;]*?QUIT[^;]*?\}\)\);\s*mMenu\.addRow\(row\);", re.DOTALL),
-    # Weitere Muster:
-    re.compile(r'([ \t]*)addEntry\(\s*_\(\s*"QUIT(?:\s+EMULATIONSTATION)?"\s*\),\s*"[^"]*",\s*false,\s*\[this\][^;]*?\);', re.DOTALL),
-    re.compile(r'([ \t]*)addRow\(.*QUIT.*\);', re.DOTALL),
 ]
 
 
@@ -329,9 +320,14 @@ def patch_menu_cpp(menu_cpp):
         if pm:
             indent = pm.group(1) or "\t"
             anchor = pm.group(0)
-            # KORREKTUR: Signatur anpassen (name, add_arrow, func, icon)
+            # NOTE: earlier versions used "mMenuIconPath" here, guessing this
+            # fork had a member variable by that name for the icon argument.
+            # It doesn't - that produced "'mMenuIconPath' was not declared in
+            # this scope". An empty string literal is a safe, dependency-free
+            # stand-in for an icon path argument and does not require knowing
+            # this fork's internal icon plumbing.
             ota_call = (
-                f'{indent}addEntry(_("OTA UPDATE"), false, '
+                f'{indent}addEntry(_("OTA UPDATE"), "", false, '
                 f"[this] {{ runOtaUpdateScript(); }});\n"
             )
             m_content = m_content.replace(anchor, ota_call + anchor, 1)
@@ -340,7 +336,6 @@ def patch_menu_cpp(menu_cpp):
             break
 
     if not wired:
-        # Fallback: Dummy-Referenz, damit der String im Binary landet
         m_content += (
             "\n// Injected OTA Update Menu Entry (Fallback - Muster nicht erkannt)\n"
             'static const char* kOtaMenuLabelFallback = "OTA Update";\n'
