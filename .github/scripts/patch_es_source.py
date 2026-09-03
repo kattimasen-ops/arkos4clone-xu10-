@@ -320,8 +320,14 @@ def patch_menu_cpp(menu_cpp):
         if pm:
             indent = pm.group(1) or "\t"
             anchor = pm.group(0)
+            # NOTE: earlier versions used "mMenuIconPath" here, guessing this
+            # fork had a member variable by that name for the icon argument.
+            # It doesn't - that produced "'mMenuIconPath' was not declared in
+            # this scope". An empty string literal is a safe, dependency-free
+            # stand-in for an icon path argument and does not require knowing
+            # this fork's internal icon plumbing.
             ota_call = (
-                f'{indent}addEntry(_("OTA UPDATE"), mMenuIconPath, false, '
+                f'{indent}addEntry(_("OTA UPDATE"), "", false, '
                 f"[this] {{ runOtaUpdateScript(); }});\n"
             )
             m_content = m_content.replace(anchor, ota_call + anchor, 1)
