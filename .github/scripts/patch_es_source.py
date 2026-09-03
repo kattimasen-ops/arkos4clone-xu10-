@@ -23,17 +23,65 @@ CUSTOM_MODES = [
 ]
 
 
+def find_main_entry(cpp_h_files, menu_cpp):
+    """Find the file that actually contains the emulationstation executable's
+    entry point.
+
+    A naive "any file named main.cpp" search is unsafe here: the repo is
+    cloned with --recursive, so a vendored submodule/dependency can easily
+    ship its own unrelated main.cpp (for its own tests/examples). Patching
+    that file compiles fine but the linker never pulls its .o into the
+    "emulationstation" target -> "undefined reference to runOtaUpdateScript()".
+
+    Strategy, most to least confident:
+      1. A file literally named main.cpp, inside the same src/ subtree as
+         GuiMenu.cpp, that actually contains "int main(".
+      2. Any file named main.cpp anywhere that contains "int main(".
+      3. Any .cpp file at all that contains "int main(" (covers forks where
+         the entry point isn't named main.cpp).
+    """
+    def has_main(path):
+        try:
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                return re.search(r"int\s+main\s*\(", f.read()) is not None
+        except OSError:
+            return False
+
+    search_root = None
+    if menu_cpp:
+        parts = menu_cpp.replace(os.sep, "/").split("/")
+        if "src" in parts:
+            search_root = "/".join(parts[: parts.index("src") + 1])  # e.g. .../es-app/src
+
+    if search_root:
+        for filepath in cpp_h_files:
+            fp = filepath.replace(os.sep, "/")
+            if fp.startswith(search_root + "/") and os.path.basename(fp) == "main.cpp" and has_main(filepath):
+                print(f"[+] main.cpp im selben Source-Baum wie GuiMenu.cpp gefunden (sicherste Wahl): {filepath}")
+                return filepath
+
+    for filepath in cpp_h_files:
+        if os.path.basename(filepath) == "main.cpp" and has_main(filepath):
+            print(f"[+] main.cpp mit echtem int main() gefunden (Fallback 1): {filepath}")
+            return filepath
+
+    for filepath in cpp_h_files:
+        if filepath.endswith(".cpp") and has_main(filepath):
+            print(f"[+] Datei mit int main() gefunden, ungewoehnlicher Dateiname (Fallback 2): {filepath}")
+            return filepath
+
+    return None
+
+
 def find_target_files():
     print("=== STEP 1: Deep Scanning Codebase for LED & Settings Logic ===")
     all_files = glob.glob(os.path.join(SOURCE_ROOT, "**", "*.*"), recursive=True)
+    cpp_h_files = [f for f in all_files if f.endswith((".cpp", ".h"))]
 
     settings_cpp = None
-    main_cpp = None
     menu_cpp = None
 
-    for filepath in all_files:
-        if not filepath.endswith((".cpp", ".h")):
-            continue
+    for filepath in cpp_h_files:
         try:
             with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
                 content = f.read()
@@ -44,13 +92,11 @@ def find_target_files():
             if not settings_cpp:
                 settings_cpp = filepath
                 print(f"[+] Erste Datei mit LED-Logik gefunden: {settings_cpp}")
-        if filepath.endswith("main.cpp"):
-            main_cpp = filepath
         if filepath.endswith("MainMenu.cpp") or filepath.endswith("mainmenu.cpp") or filepath.endswith("GuiMenu.cpp"):
             menu_cpp = filepath
 
     if not settings_cpp:
-        for filepath in all_files:
+        for filepath in cpp_h_files:
             if "GuiSettings" in filepath and filepath.endswith(".cpp"):
                 settings_cpp = filepath
                 print(f"[+] Fallback Settings-Datei gefunden: {settings_cpp}")
@@ -59,6 +105,10 @@ def find_target_files():
     if not settings_cpp:
         print("[!] Keine passende Einstellungsdatei gefunden. Abbruch.")
         sys.exit(1)
+
+    # menu_cpp is resolved first so main.cpp detection can anchor on its
+    # source subtree - see find_main_entry() for why that matters.
+    main_cpp = find_main_entry(cpp_h_files, menu_cpp)
 
     print(f"[+] Ziel-Datei (Settings): {settings_cpp}")
     print(f"[+] Ziel-Datei (Main.cpp): {main_cpp}")
