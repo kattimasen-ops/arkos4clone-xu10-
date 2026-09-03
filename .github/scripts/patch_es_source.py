@@ -320,14 +320,17 @@ def patch_menu_cpp(menu_cpp):
         if pm:
             indent = pm.group(1) or "\t"
             anchor = pm.group(0)
-            # NOTE: earlier versions used "mMenuIconPath" here, guessing this
-            # fork had a member variable by that name for the icon argument.
-            # It doesn't - that produced "'mMenuIconPath' was not declared in
-            # this scope". An empty string literal is a safe, dependency-free
-            # stand-in for an icon path argument and does not require knowing
-            # this fork's internal icon plumbing.
+            # Real signature confirmed by the compiler for this fork:
+            #   void addEntry(std::string name, bool add_arrow,
+            #                 const std::function<void()>& func,
+            #                 const std::string iconName = "");
+            # i.e. (label, add_arrow_bool, lambda, iconName) - NOT
+            # (label, icon, bool, lambda) as earlier versions guessed.
+            # "false" for add_arrow matches how the QUIT entry we anchor on
+            # is written (an action entry, not a submenu opener), and the
+            # trailing iconName is left at its default.
             ota_call = (
-                f'{indent}addEntry(_("OTA UPDATE"), "", false, '
+                f'{indent}addEntry(_("OTA UPDATE"), false, '
                 f"[this] {{ runOtaUpdateScript(); }});\n"
             )
             m_content = m_content.replace(anchor, ota_call + anchor, 1)
