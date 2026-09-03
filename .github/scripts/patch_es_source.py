@@ -131,35 +131,36 @@ def find_target_files():
     main_cpp = find_main_entry(cpp_h_files, menu_cpp)
     return main_cpp, menu_cpp
 
-SAFE_LAUNCH_CODE = """
-// === ES_CUSTOM_PATCH_START ===
+SAFE_LAUNCH_CODE = """// === ES_CUSTOM_PATCH_START ===
 #include <iostream>
 #include <cstdlib>
+#include <cstddef>
 
-static const char* g_custom_led_modes[] = {
-    "rainbow_wave", "strobe_party", "color_fade", "battery_status",
-    "fire", "police", "disco", "rainbow_chase",
-    "solid_gradient", "wave", "rainbow_full"
-};
+namespace EsCustomPatch {
+    static const char* const g_custom_led_modes[] = {
+        "rainbow_wave", "strobe_party", "color_fade", "battery_status",
+        "fire", "police", "disco", "rainbow_chase",
+        "solid_gradient", "wave", "rainbow_full"
+    };
 
-static volatile const char* g_dummy_led_ref = 0;
-
-inline void keepLedStringsInBinary() {
-    for (size_t i = 0; i < sizeof(g_custom_led_modes) / sizeof(g_custom_led_modes[0]); ++i) {
-        g_dummy_led_ref = g_custom_led_modes[i];
+    static inline void keepLedStringsInBinary() {
+        volatile const char* dummy = g_custom_led_modes[0];
+        for (size_t i = 0; i < sizeof(g_custom_led_modes) / sizeof(g_custom_led_modes[0]); ++i) {
+            dummy = g_custom_led_modes[i];
+        }
+        (void)dummy;
     }
-    (void)g_dummy_led_ref;
 }
 
 inline void runOtaUpdateScript() {
-    keepLedStringsInBinary();
+    EsCustomPatch::keepLedStringsInBinary();
     std::cout << "[ES] OTA Update triggered" << std::endl;
     int res = std::system("/usr/local/bin/update_check.sh &");
     (void)res;
 }
 
 inline void launchLedDaemonOnce() {
-    keepLedStringsInBinary();
+    EsCustomPatch::keepLedStringsInBinary();
     std::cout << "[ES] Launching MCU LED Daemon process..." << std::endl;
     int res = std::system("/usr/local/bin/mcu_led_daemon.sh &");
     (void)res;
@@ -174,19 +175,16 @@ def patch_main_cpp(main_cpp):
     with open(main_cpp, "r", encoding="utf-8", errors="ignore") as f:
         main_content = f.read()
 
-    # Vollständige Säuberung aller bisherigen Custom-Patches
+    # Säuberung aller bisherigen Custom-Patches
     main_content = re.sub(r'// === ES_CUSTOM_PATCH_START ===.*?// === ES_CUSTOM_PATCH_END ===\n?', '', main_content, flags=re.DOTALL)
     main_content = re.sub(r'// Safe External Daemon.*?\n\n', '', main_content, flags=re.DOTALL)
     main_content = re.sub(r'// Forward Declarations.*?\n\n', '', main_content, flags=re.DOTALL)
     main_content = re.sub(r'// Safe Daemon & OTA Launchers.*?\n\n', '', main_content, flags=re.DOTALL)
+    main_content = re.sub(r'inline void runOtaUpdateScript\(\)\s*\{.*?\n\}', '', main_content, flags=re.DOTALL)
+    main_content = re.sub(r'inline void launchLedDaemonOnce\(\)\s*\{.*?\n\}', '', main_content, flags=re.DOTALL)
 
-    # Injektion direkt nach dem allerersten #include der Datei
-    first_include = re.search(r'#include\s+[<"][^>"]+[>"]', main_content)
-    if first_include:
-        idx = first_include.end()
-        main_content = main_content[:idx] + "\n" + SAFE_LAUNCH_CODE + main_content[idx:]
-    else:
-        main_content = SAFE_LAUNCH_CODE + "\n" + main_content
+    # Injektion direkt an erster Stelle der Datei
+    main_content = SAFE_LAUNCH_CODE.strip() + "\n\n" + main_content
 
     if "launchLedDaemonOnce();" not in main_content:
         injection_code = (
