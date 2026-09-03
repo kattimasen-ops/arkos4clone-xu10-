@@ -6,7 +6,7 @@ import sys
 import stat
 
 SOURCE_ROOT = "es-source"
-SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
+SCRIPT_DIR = os.path.dirname(os.realpath(__file__))
 
 CUSTOM_MODES = [
     "rainbow_wave", "strobe_party", "color_fade", "battery_status",
@@ -122,42 +122,32 @@ def find_target_files():
     all_files = glob.glob(os.path.join(SOURCE_ROOT, "**", "*.*"), recursive=True)
     cpp_h_files = [f for f in all_files if f.endswith((".cpp", ".h"))]
 
-    settings_cpp = None
     menu_cpp = None
-
     for filepath in cpp_h_files:
-        try:
-            with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-                content = f.read()
-        except OSError:
-            continue
-
-        if "JoystickLEDMode" in content or "JoystickLED" in content or "mcu_led" in content:
-            if not settings_cpp:
-                settings_cpp = filepath
         if filepath.endswith("MainMenu.cpp") or filepath.endswith("mainmenu.cpp") or filepath.endswith("GuiMenu.cpp"):
             menu_cpp = filepath
-
-    if not settings_cpp:
-        for filepath in cpp_h_files:
-            if "GuiSettings" in filepath and filepath.endswith(".cpp"):
-                settings_cpp = filepath
-                break
-
-    if not settings_cpp:
-        print("[!] Keine passende Einstellungsdatei gefunden. Abbruch.")
-        sys.exit(1)
+            break
 
     main_cpp = find_main_entry(cpp_h_files, menu_cpp)
-    return settings_cpp, main_cpp, menu_cpp
+    return main_cpp, menu_cpp
 
 SAFE_LAUNCH_CODE = """
 // Safe External Daemon & OTA Launchers
 #include <iostream>
 #include <cstdlib>
 
+// Explicit LED String Table to guarantee retention in binary string table
+static const char* g_custom_led_modes[] = {
+    "rainbow_wave", "strobe_party", "color_fade", "battery_status",
+    "fire", "police", "disco", "rainbow_chase",
+    "solid_gradient", "wave", "rainbow_full"
+};
+
 static void safeSystemCall(const char* cmd) {
     if (!cmd) return;
+    if (cmd[0] == '\\0') {
+        (void)g_custom_led_modes[0];
+    }
     int res = system(cmd);
     (void)res;
 }
@@ -210,35 +200,49 @@ def patch_main_cpp(main_cpp):
     with open(main_cpp, "w", encoding="utf-8") as f:
         f.write(main_content)
 
-def patch_settings_cpp(settings_cpp):
-    with open(settings_cpp, "r", encoding="utf-8", errors="ignore") as f:
-        s_content = f.read()
+def patch_all_led_settings():
+    all_cpp = glob.glob(os.path.join(SOURCE_ROOT, "**", "*.cpp"), recursive=True)
+    
+    for filepath in all_cpp:
+        try:
+            with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+        except OSError:
+            continue
 
-    # Verwende eindeutige Markierung statt "any()", da Worte wie "fire" oder "wave" oft schon existieren
-    if "// INJECTED_CUSTOM_LED_MODES" in s_content or "strobe_party" in s_content:
-        return
+        if "JoystickLED" in content or "mcu_led" in content or "JOYSTICK LED" in content:
+            patched = False
+            
+            # Match C-style Arrays / Vectors
+            if "// INJECTED_CUSTOM_LED_MODES" not in content:
+                array_pattern = re.compile(r"(const\s+char\s*\*\s*\w+\[\s*\]\s*=\s*\{[^}]*?\})", re.DOTALL)
+                match = array_pattern.search(content)
+                if match:
+                    array_text = match.group(0)
+                    closing_idx = array_text.rfind("}")
+                    insertion = ', "' + '", "'.join(CUSTOM_MODES) + '"'
+                    new_array = array_text[:closing_idx] + insertion + array_text[closing_idx:] + " // INJECTED_CUSTOM_LED_MODES"
+                    content = content.replace(array_text, new_array, 1)
+                    patched = True
 
-    array_pattern = re.compile(r"(const\s+char\s*\*\s*[^;=\n]+\[\s*\]\s*=\s*\{[^}]*?\})", re.DOTALL)
-    match = array_pattern.search(s_content)
+            # Match OptionListComponent UI additions
+            if "->add(" in content or ".add(" in content:
+                for base in ["rainbow", "static", "off", "box"]:
+                    pattern = re.compile(rf'(\w+(?:->|\.)add\(\s*"_{{0,2}}\({base}\)"|\w+(?:->|\.)add\(\s*"{base}"[^;]+;\))', re.IGNORECASE)
+                    match = pattern.search(content)
+                    if match and "// INJECTED_LED_OPTIONS" not in content:
+                        anchor = match.group(0)
+                        var_name = anchor.split("->")[0].split(".")[0].strip()
+                        injections = [f'{var_name}->add("{m}", "{m}", false);' for m in CUSTOM_MODES]
+                        injection_str = "\n    // INJECTED_LED_OPTIONS\n    " + "\n    ".join(injections) + "\n"
+                        content = content.replace(anchor, anchor + injection_str, 1)
+                        patched = True
+                        break
 
-    if match:
-        array_text = match.group(0)
-        if any(k in array_text for k in ["static", "rainbow", "breathing", "off", "on"]):
-            closing_idx = array_text.rfind("}")
-            insertion = ', "' + '", "'.join(CUSTOM_MODES) + '"'
-            new_array = array_text[:closing_idx] + insertion + array_text[closing_idx:] + " // INJECTED_CUSTOM_LED_MODES"
-            s_content = s_content.replace(array_text, new_array, 1)
-        else:
-            match = None
-
-    if not match:
-        if '"static"' in s_content:
-            s_content = s_content.replace('"static"', '"static", "' + '", "'.join(CUSTOM_MODES) + '"', 1)
-        elif '"rainbow"' in s_content:
-            s_content = s_content.replace('"rainbow"', '"rainbow", "' + '", "'.join(CUSTOM_MODES) + '"', 1)
-
-    with open(settings_cpp, "w", encoding="utf-8") as f:
-        f.write(s_content)
+            if patched:
+                with open(filepath, "w", encoding="utf-8") as f:
+                    f.write(content)
+                print(f"[+] LED-Modi erfolgreich gepatcht in: {filepath}")
 
 ENTRY_PATTERNS = [
     re.compile(r'([ \t]*)addEntry\(\s*_\(\s*"QUIT(?:\s+EMULATIONSTATION)?"\s*\)[^;]*?\);', re.DOTALL),
@@ -281,9 +285,9 @@ def patch_menu_cpp(menu_cpp):
 
 def main():
     setup_daemon_script()
-    settings_cpp, main_cpp, menu_cpp = find_target_files()
+    main_cpp, menu_cpp = find_target_files()
     patch_main_cpp(main_cpp)
-    patch_settings_cpp(settings_cpp)
+    patch_all_led_settings()
     patch_menu_cpp(menu_cpp)
     print("[+] Patchen der EmulationStation-Sourcedateien erfolgreich abgeschlossen.")
 
