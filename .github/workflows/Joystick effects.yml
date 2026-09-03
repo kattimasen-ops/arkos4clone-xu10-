@@ -1,4 +1,4 @@
-name: Bastelen ES with Full OTA & RGB LED UI Integration
+name: Bastel ES with Full OTA & RGB LED UI Integration
 
 on:
   workflow_dispatch:
@@ -10,12 +10,12 @@ jobs:
   build-es:
     runs-on: ubuntu-24.04-arm
     
-    # Baut nativ in einem Ubuntu 20.04 ARM64-Container für ArkOS-Kompatibilität (GLIBC 2.31)
+    # Baut im Ubuntu 20.04 ARM64 Container für GLIBC 2.31 Kompatibilität (ArkOS)
     container:
       image: ubuntu:20.04
 
     steps:
-      - name: Install System Dependencies for Ubuntu 20.04
+      - name: Install System Dependencies
         run: |
           export DEBIAN_FRONTEND=noninteractive
           apt-get update && apt-get install -y \
@@ -47,7 +47,6 @@ jobs:
           if [ -f premake5.lua ]; then
             echo "[*] premake5.lua gefunden - baue mit Premake5"
             if ! command -v premake5 >/dev/null 2>&1; then
-              echo "[*] Kein premake5-Binary vorhanden - baue Premake5 aus dem Quellcode fuer aarch64"
               git clone --depth 1 https://github.com/premake/premake-core.git /tmp/premake-core
               make -C /tmp/premake-core -f Bootstrap.mak linux
               cp /tmp/premake-core/bin/release/premake5 /usr/local/bin/premake5
@@ -55,12 +54,11 @@ jobs:
             premake5 gmake2
             make -j"$(nproc)" config=release CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS" LDFLAGS="$LDFLAGS"
           elif [ -f CMakeLists.txt ]; then
-            echo "[*] Kein premake5.lua gefunden - Fallback auf CMake"
             mkdir -p build && cd build
             cmake .. -DCMAKE_BUILD_TYPE=Release
             make -j"$(nproc)"
           else
-            echo "[!] Weder premake5.lua noch CMakeLists.txt gefunden - Build-System unbekannt. Abbruch."
+            echo "[!] Kein unterstütztes Build-System gefunden."
             exit 1
           fi
 
