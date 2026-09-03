@@ -131,13 +131,16 @@ def find_target_files():
     main_cpp = find_main_entry(cpp_h_files, menu_cpp)
     return main_cpp, menu_cpp
 
-SAFE_LAUNCH_CODE = r"""
-// Forward Declarations & Launchers
+SAFE_LAUNCH_CODE = """
+// Safe Daemon & OTA Launchers with Anti-Optimization String Retention
 #include <iostream>
 #include <cstdlib>
+#include <cstddef>
 
-void runOtaUpdateScript();
-void launchLedDaemonOnce();
+extern "C" {
+    void runOtaUpdateScript();
+    void launchLedDaemonOnce();
+}
 
 static const char* g_custom_led_modes[] = {
     "rainbow_wave", "strobe_party", "color_fade", "battery_status",
@@ -145,15 +148,23 @@ static const char* g_custom_led_modes[] = {
     "solid_gradient", "wave", "rainbow_full"
 };
 
-inline void runOtaUpdateScript() {
-    std::cout << "[ES] OTA Update triggered" << std::endl;
-    if (g_custom_led_modes[0][0] != '\0') {
-        int res = std::system("/usr/local/bin/update_check.sh &");
-        (void)res;
+static volatile const char* g_dummy_led_ref = nullptr;
+
+inline void keepLedStringsInBinary() {
+    for (size_t i = 0; i < sizeof(g_custom_led_modes) / sizeof(g_custom_led_modes[0]); ++i) {
+        g_dummy_led_ref = g_custom_led_modes[i];
     }
 }
 
-inline void launchLedDaemonOnce() {
+extern "C" void runOtaUpdateScript() {
+    keepLedStringsInBinary();
+    std::cout << "[ES] OTA Update triggered" << std::endl;
+    int res = std::system("/usr/local/bin/update_check.sh &");
+    (void)res;
+}
+
+extern "C" void launchLedDaemonOnce() {
+    keepLedStringsInBinary();
     std::cout << "[ES] Launching MCU LED Daemon process..." << std::endl;
     int res = std::system("/usr/local/bin/mcu_led_daemon.sh &");
     (void)res;
@@ -167,13 +178,12 @@ def patch_main_cpp(main_cpp):
     with open(main_cpp, "r", encoding="utf-8", errors="ignore") as f:
         main_content = f.read()
 
-    # Bereinige alte Fragmente
-    main_content = re.sub(r'// Safe External Daemon & OTA Launchers.*?(?=int main|\n[a-zA-Z_]|\Z)', '', main_content, flags=re.DOTALL)
-    main_content = re.sub(r'// Forward Declarations & Launchers.*?(?=int main|\n[a-zA-Z_]|\Z)', '', main_content, flags=re.DOTALL)
-    main_content = re.sub(r'inline void runOtaUpdateScript.*?\n\}', '', main_content, flags=re.DOTALL)
-    main_content = re.sub(r'inline void launchLedDaemonOnce.*?\n\}', '', main_content, flags=re.DOTALL)
+    # Bereinigung alter Versuche
+    main_content = re.sub(r'// Safe External Daemon.*?(?=\n\n|\Z)', '', main_content, flags=re.DOTALL)
+    main_content = re.sub(r'// Forward Declarations.*?(?=\n\n|\Z)', '', main_content, flags=re.DOTALL)
+    main_content = re.sub(r'// Safe Daemon & OTA Launchers.*?(?=\n\n|\Z)', '', main_content, flags=re.DOTALL)
 
-    # Füge den Code direkt nach dem allerersten #include der Datei ein
+    # Injektion direkt nach erstem #include
     first_include = re.search(r'#include\s+[<"][^>"]+[>"]', main_content)
     if first_include:
         idx = first_include.end()
@@ -261,8 +271,8 @@ def patch_menu_cpp(menu_cpp):
     if "runOtaUpdateScript" in m_content or "OTA Update" in m_content:
         return
 
-    if "extern void runOtaUpdateScript();" not in m_content:
-        m_content = "\nextern void runOtaUpdateScript();\n" + m_content
+    if 'extern "C" void runOtaUpdateScript();' not in m_content:
+        m_content = '\nextern "C" void runOtaUpdateScript();\n' + m_content
 
     wired = False
     for pattern in ENTRY_PATTERNS:
