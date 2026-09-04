@@ -33,17 +33,19 @@ jobs:
             # Clone source repository
             git clone --depth 1 --recursive https://github.com/lcdyk0517/EmulationStation-fcamod.git es-source
 
-            # Run Python patcher
-            python3 .github/scripts/patch_es_source.py
+            # Run Python patcher using absolute repository workspace path
+            if [ -f "$GITHUB_WORKSPACE/.github/scripts/patch_es_source.py" ]; then
+              python3 "$GITHUB_WORKSPACE/.github/scripts/patch_es_source.py"
+            fi
 
-            # Build ES with safe optimization flags to avoid OOM crash under QEMU
+            # Build ES with Cortex-A35 optimization flags and memory safety (-j2)
             cd es-source
             export CFLAGS="-mcpu=cortex-a35 -mtune=cortex-a35 -O2 -pipe -fno-strict-aliasing -Wno-unused-result -Wno-error"
             export CXXFLAGS="-mcpu=cortex-a35 -mtune=cortex-a35 -O2 -pipe -std=c++17 -fno-strict-aliasing -static-libgcc -static-libstdc++ -Wno-unused-result -Wno-error"
             export LDFLAGS="-static-libgcc -static-libstdc++"
 
             if [ -f premake5.lua ]; then
-              echo "[*] premake5.lua gefunden - baue mit Premake5"
+              echo "[*] premake5.lua found - building with Premake5"
               if ! command -v premake5 >/dev/null 2>&1; then
                 git clone --depth 1 https://github.com/premake/premake-core.git /tmp/premake-core
                 make -C /tmp/premake-core -f Bootstrap.mak linux
@@ -56,21 +58,24 @@ jobs:
               cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_STANDARD=17
               make -j2
             else
-              echo "[!] Kein unterstütztes Build-System gefunden."
+              echo "[!] No supported build system found."
               exit 1
             fi
 
-            cd ..
-            python3 .github/scripts/verify_es_binary.py
+            # Execute verification script using absolute repository workspace path
+            if [ -f "$GITHUB_WORKSPACE/.github/scripts/verify_es_binary.py" ]; then
+              python3 "$GITHUB_WORKSPACE/.github/scripts/verify_es_binary.py"
+            fi
 
       - name: Upload Built Binary & Companion Scripts
         uses: actions/upload-artifact@v4
         with:
           name: emulationstation-fcamod-m9pro
           path: |
-            es-source/**/emulationstation*
-            es-source/mcu_led_daemon.sh
-            es-source/update_check.sh
+            es-source/**/emulationstation
+            es-source/resources/
+            mcu_led_daemon.sh
+            update_check.sh
             es_patch.sh
           retention-days: 14
           if-no-files-found: warn
