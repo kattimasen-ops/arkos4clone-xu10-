@@ -41,10 +41,10 @@ jobs:
               python3 "$GITHUB_WORKSPACE/.github/scripts/patch_es_source.py"
             fi
 
-            # Build ES with Cortex-A35 optimization flags and memory safety (-j2)
+            # Build ES with memory-safe flags (-O1 and -j1) to prevent QEMU OOM crashes
             cd es-source
-            export CFLAGS="-mcpu=cortex-a35 -mtune=cortex-a35 -O2 -pipe -fno-strict-aliasing -Wno-unused-result -Wno-error"
-            export CXXFLAGS="-mcpu=cortex-a35 -mtune=cortex-a35 -O2 -pipe -std=c++17 -fno-strict-aliasing -static-libgcc -static-libstdc++ -Wno-unused-result -Wno-error"
+            export CFLAGS="-mcpu=cortex-a35 -mtune=cortex-a35 -O1 -pipe -fno-strict-aliasing -Wno-unused-result -Wno-error"
+            export CXXFLAGS="-mcpu=cortex-a35 -mtune=cortex-a35 -O1 -pipe -std=c++17 -fno-strict-aliasing -static-libgcc -static-libstdc++ -Wno-unused-result -Wno-error"
             export LDFLAGS="-static-libgcc -static-libstdc++"
 
             if [ -f premake5.lua ]; then
@@ -55,11 +55,11 @@ jobs:
                 cp /tmp/premake-core/bin/release/premake5 /usr/local/bin/premake5
               fi
               premake5 gmake2
-              make -j2 config=release CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS" LDFLAGS="$LDFLAGS"
+              make -j1 config=release CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS" LDFLAGS="$LDFLAGS"
             elif [ -f CMakeLists.txt ]; then
               mkdir -p build && cd build
               cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_STANDARD=17
-              make -j2
+              make -j1
             else
               echo "[!] No supported build system found."
               exit 1
