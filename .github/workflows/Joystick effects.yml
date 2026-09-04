@@ -80,59 +80,22 @@ jobs:
             git clone --recursive --depth=1 https://github.com/christianhaitian/EmulationStation-fcamod.git /tmp/es-source
             cd /tmp/es-source
 
+            # Header-level inline injection: Guaranteed compile and link resolution across all backends
             python3 -c '
-            import os, re
+            import os
 
-            es_dir = "/tmp/es-source"
-
-            # 1. Patch Renderer.h declaration
-            ren_h = None
-            for root, dirs, files in os.walk(es_dir):
+            for root, dirs, files in os.walk("."):
                 if "Renderer.h" in files:
                     ren_h = os.path.join(root, "Renderer.h")
+                    with open(ren_h, "r") as f:
+                        content = f.read()
+
+                    if "getSDLWindow" not in content:
+                        patch = "\n#include <SDL2/SDL.h>\nnamespace Renderer {\n    inline SDL_Window* getSDLWindow() { return SDL_GL_GetCurrentWindow(); }\n}\n"
+                        with open(ren_h, "a") as f:
+                            f.write(patch)
+                        print("[+] Injected inline getSDLWindow() into " + ren_h)
                     break
-
-            if ren_h:
-                with open(ren_h, "r") as f:
-                    h_content = f.read()
-                if "getSDLWindow()" not in h_content:
-                    if "namespace Renderer" in h_content:
-                        h_content = re.sub(r"(namespace\s+Renderer\s*\{)", r"\1\n    SDL_Window* getSDLWindow();", h_content, count=1)
-                    elif "class Renderer" in h_content:
-                        h_content = re.sub(r"(class\s+Renderer\s*\{)", r"\1\npublic:\n    static SDL_Window* getSDLWindow();", h_content, count=1)
-                    with open(ren_h, "w") as f:
-                        f.write(h_content)
-
-            # 2. Patch Renderer *.cpp implementation files deterministically
-            for root, dirs, files in os.walk(os.path.join(es_dir, "es-core")):
-                for f in files:
-                    if f.startswith("Renderer") and f.endswith(".cpp"):
-                        cpp_path = os.path.join(root, f)
-                        with open(cpp_path, "r") as file:
-                            content = file.read()
-
-                        if "getSDLWindow()" in content:
-                            continue
-
-                        if "namespace Renderer" in content:
-                            content = re.sub(
-                                r"(namespace\s+Renderer\s*\{)",
-                                r"\1\n    static SDL_Window* mGpuWindow = nullptr;\n    SDL_Window* getSDLWindow() { return mGpuWindow ? mGpuWindow : SDL_GL_GetCurrentWindow(); }\n",
-                                content,
-                                count=1
-                            )
-                            content = re.sub(
-                                r"(SDL_CreateWindow\s*\(.*?\);)",
-                                r"\1 mGpuWindow = SDL_GL_GetCurrentWindow();",
-                                content,
-                                flags=re.DOTALL
-                            )
-                            with open(cpp_path, "w") as file:
-                                file.write(content)
-                        elif "class Renderer" in content:
-                            content += "\nstatic SDL_Window* mGpuWindow = nullptr;\nSDL_Window* Renderer::getSDLWindow() { return mGpuWindow ? mGpuWindow : SDL_GL_GetCurrentWindow(); }\n"
-                            with open(cpp_path, "w") as file:
-                                file.write(content)
             '
 
             echo "[+] Step 5: Configuring and compiling EmulationStation against GLIBC 2.31..."
