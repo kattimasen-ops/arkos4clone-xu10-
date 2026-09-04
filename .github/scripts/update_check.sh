@@ -1,103 +1,155 @@
-#!/usr/bin/env bash
-# ==============================================================================
-# update_check.sh - ArkOS4Clones Automated OTA Update Engine
-# ==============================================================================
-# Features:
-#  - Queries GitHub API for new ArkOS4Clones release tags
-#  - Downloads update-arkos.tar into /Easyroms/tools/
-#  - Downloads firstboot.sh into /boot/ (Boot Partition)
-# ==============================================================================
+#!/bin/bash
+# OTA Update check & installation trigger for ArkOS4Clones
+# Fetches latest release from lcdyk0517/arkos4clone, downloads assets,
+# and places them in the correct partitions for automatic update on next boot.
 
 set -euo pipefail
 
 LOGFILE="/tmp/ota_update.log"
-MARKER_FILE="/etc/arkos4clones_version"
-REPO_OWNER="arkos4clones"
-REPO_NAME="arkos4clones"
-BOOT_DIR="/boot"
+REPO="lcdyk0517/arkos4clone"
+VERSION_FILE="/home/ark/.emulationstation/es_version"   # adjust if needed
 
-# Resolve Easyroms tools directory with fallbacks for SD1/SD2 mount variations
-TOOLS_DIR="/Easyroms/tools"
-if [ ! -d "/Easyroms" ]; then
-    if [ -d "/roms/tools" ]; then
-        TOOLS_DIR="/roms/tools"
-    elif [ -d "/roms2/tools" ]; then
-        TOOLS_DIR="/roms2/tools"
-    fi
-fi
+echo "[OTA] Check initiated on $(date)" > "$LOGFILE"
 
-exec > >(tee -a "$LOGFILE") 2>&1
-
-echo "=================================================="
-echo " ArkOS4Clones OTA Update Check: $(date)"
-echo "=================================================="
-
-CURRENT_VERSION="v0.0.0"
-if [ -f "$MARKER_FILE" ]; then
-    CURRENT_VERSION="$(cat "$MARKER_FILE" | tr -d ' \n\r')"
-fi
-echo "[+] Currently installed version: ${CURRENT_VERSION}"
-
-echo "[+] Querying GitHub API for latest release..."
-API_RESPONSE=$(curl -s "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest" || true)
-
-if [ -z "$API_RESPONSE" ] || echo "$API_RESPONSE" | grep -q "Not Found"; then
-    echo "[!] ERROR: Could not fetch release data from GitHub repository (${REPO_OWNER}/${REPO_NAME})."
-    exit 1
-fi
-
-LATEST_TAG=$(echo "$API_RESPONSE" | jq -r '.tag_name // empty')
-CHANGELOG=$(echo "$API_RESPONSE" | jq -r '.body // "No release notes provided."')
+# ----------------------------------------------------------------------
+# 1. Get latest release info from GitHub API
+# ----------------------------------------------------------------------
+echo "[OTA] Fetching latest release info..." >> "$LOGFILE"
+LATEST_RELEASE_JSON=$(curl -s "https://api.github.com/repos/${REPO}/releases/latest")
+LATEST_TAG=$(echo "$LATEST_RELEASE_JSON" | grep -oP '"tag_name":\s*"\K[^"]+' || true)
 
 if [ -z "$LATEST_TAG" ]; then
-    echo "[!] ERROR: Failed to parse latest tag from release API."
+    echo "[OTA] Could not fetch latest release. Aborting." >> "$LOGFILE"
     exit 1
 fi
 
-echo "[+] Latest available version: ${LATEST_TAG}"
+echo "[OTA] Latest release: $LATEST_TAG" >> "$LOGFILE"
 
-if [ "$CURRENT_VERSION" == "$LATEST_TAG" ]; then
-    echo "[✓] Your system is already up to date (${CURRENT_VERSION})!"
+# ----------------------------------------------------------------------
+# 2. Compare with current version (if stored)
+# ----------------------------------------------------------------------
+CURRENT_TAG=""
+if [ -f "$VERSION_FILE" ]; then
+    CURRENT_TAG=$(cat "$VERSION_FILE")
+fi
+
+if [ "$CURRENT_TAG" == "$LATEST_TAG" ]; then
+    echo "[OTA] Already up to date ($CURRENT_TAG)." >> "$LOGFILE"
     exit 0
 fi
 
-echo "=================================================="
-echo " NEW UPDATE AVAILABLE: ${LATEST_TAG}"
-echo "=================================================="
-echo "Changelog:"
-echo "${CHANGELOG}"
-echo "=================================================="
+# ----------------------------------------------------------------------
+# 3. Extract asset download URLs
+# ----------------------------------------------------------------------
+# Parse JSON for asset names and browser_download_url
+ASSET_URLS=$(echo "$LATEST_RELEASE_JSON" | jq -r '.assets[] | "\(.name)|\(.browser_download_url)"')
 
-TAR_URL=$(echo "$API_RESPONSE" | jq -r '.assets[] | select(.name=="update-arkos.tar") | .browser_download_url')
-FIRSTBOOT_URL=$(echo "$API_RESPONSE" | jq -r '.assets[] | select(.name=="firstboot.sh") | .browser_download_url')
+FIRSTBOOT_URL=""
+UPDATE_URL=""
 
-if [ -z "$TAR_URL" ] || [ -z "$FIRSTBOOT_URL" ]; then
-    echo "[!] ERROR: Release assets (update-arkos.tar / firstboot.sh) were not found in release ${LATEST_TAG}!"
+while IFS= read -r line; do
+    NAME=$(echo "$line" | cut -d'|' -f1)
+    URL=$(echo "$line" | cut -d'|' -f2)
+    if [ "$NAME" == "firstboot.sh" ]; then
+        FIRSTBOOT_URL="$URL"
+    elif [ "$NAME" == "update-arkos.tar" ]; then
+        UPDATE_URL="$URL"
+    fi
+done <<< "$ASSET_URLS"
+
+if [ -z "$FIRSTBOOT_URL" ] || [ -z "$UPDATE_URL" ]; then
+    echo "[OTA] Required assets not found in release. Aborting." >> "$LOGFILE"
     exit 1
 fi
 
-# Ensure staging target directories exist
-mkdir -p "$TOOLS_DIR"
-mkdir -p "$BOOT_DIR"
+echo "[OTA] Downloading firstboot.sh..." >> "$LOGFILE"
+curl -L -o /tmp/firstboot.sh "$FIRSTBOOT_URL"
 
-echo "[+] Staging download payloads..."
+echo "[OTA] Downloading update-arkos.tar..." >> "$LOGFILE"
+curl -L -o /tmp/update-arkos.tar "$UPDATE_URL"
 
-# Download update-arkos.tar into /Easyroms/tools/
-echo "    -> Downloading update-arkos.tar to ${TOOLS_DIR}..."
-curl -L -o "${TOOLS_DIR}/update-arkos.tar" "$TAR_URL"
-echo "       [✓] Downloaded update-arkos.tar"
+# ----------------------------------------------------------------------
+# 4. Verify downloads are valid (check file size)
+# ----------------------------------------------------------------------
+if [ ! -s /tmp/firstboot.sh ] || [ ! -s /tmp/update-arkos.tar ]; then
+    echo "[OTA] Download failed (empty file). Aborting." >> "$LOGFILE"
+    exit 1
+fi
 
-# Download firstboot.sh into Boot Partition (/boot/)
-echo "    -> Downloading firstboot.sh to ${BOOT_DIR}..."
-curl -L -o "${BOOT_DIR}/firstboot.sh" "$FIRSTBOOT_URL"
-chmod +x "${BOOT_DIR}/firstboot.sh"
-echo "       [✓] Downloaded firstboot.sh"
+# ----------------------------------------------------------------------
+# 5. Locate and mount the BOOT partition (if not already mounted)
+# ----------------------------------------------------------------------
+echo "[OTA] Preparing BOOT partition..." >> "$LOGFILE"
 
-# Update local version marker
-echo "${LATEST_TAG}" > "$MARKER_FILE"
+# Check if /boot is already mounted (it usually is on ArkOS)
+if ! mountpoint -q /boot; then
+    echo "[OTA] /boot not mounted. Attempting to mount..." >> "$LOGFILE"
+    # Find the boot partition device (common on SD: /dev/mmcblk0p1 or /dev/root)
+    # Try common patterns. If it fails, prompt user.
+    BOOT_DEV=$(ls /dev/mmcblk* 2>/dev/null | head -n1 | sed 's/p[0-9]*$//')"p1" 2>/dev/null || true
+    if [ -z "$BOOT_DEV" ]; then
+        # Fallback to typical first partition
+        BOOT_DEV="/dev/mmcblk0p1"
+    fi
+    if [ ! -b "$BOOT_DEV" ]; then
+        echo "[OTA] Could not find BOOT partition device. Please mount manually and re-run." >> "$LOGFILE"
+        exit 1
+    fi
+    mkdir -p /mnt/boot
+    mount "$BOOT_DEV" /mnt/boot || {
+        echo "[OTA] Failed to mount $BOOT_DEV on /mnt/boot." >> "$LOGFILE"
+        exit 1
+    }
+else
+    # If /boot is already mounted, it might be read-only? Assume it's writable.
+    BOOT_DIR="/boot"
+fi
 
-echo "=================================================="
-echo "[✓] Update archive placed in: ${TOOLS_DIR}/update-arkos.tar"
-echo "[✓] Firstboot script placed in: ${BOOT_DIR}/firstboot.sh"
-echo "[!] Reboot your device now to trigger the ArkOS update handler."
-echo "=================================================="
+# Determine actual boot directory
+BOOT_DIR="${BOOT_DIR:-/mnt/boot}"
+
+# ----------------------------------------------------------------------
+# 6. Copy firstboot.sh to boot partition
+# ----------------------------------------------------------------------
+echo "[OTA] Copying firstboot.sh to $BOOT_DIR/" >> "$LOGFILE"
+cp -f /tmp/firstboot.sh "$BOOT_DIR/firstboot.sh"
+chmod +x "$BOOT_DIR/firstboot.sh"
+
+# ----------------------------------------------------------------------
+# 7. Locate and copy update-arkos.tar to Easyroms folder
+# ----------------------------------------------------------------------
+echo "[OTA] Searching for Easyroms directory..." >> "$LOGFILE"
+# Common locations on ArkOS
+if [ -d "/home/ark/Easyroms" ]; then
+    EASYROMS="/home/ark/Easyroms"
+elif [ -d "/roms" ]; then
+    # Check for tools subfolder as fallback
+    if [ -d "/roms/tools" ]; then
+        EASYROMS="/roms/tools"
+    else
+        EASYROMS="/roms"
+    fi
+else
+    echo "[OTA] Easyroms directory not found. Please ensure it exists." >> "$LOGFILE"
+    exit 1
+fi
+
+echo "[OTA] Copying update-arkos.tar to $EASYROMS/" >> "$LOGFILE"
+cp -f /tmp/update-arkos.tar "$EASYROMS/update-arkos.tar"
+
+# ----------------------------------------------------------------------
+# 8. Update version file
+# ----------------------------------------------------------------------
+echo "$LATEST_TAG" > "$VERSION_FILE"
+echo "[OTA] Version file updated to $LATEST_TAG" >> "$LOGFILE"
+
+# ----------------------------------------------------------------------
+# 9. Cleanup and final message
+# ----------------------------------------------------------------------
+rm -f /tmp/firstboot.sh /tmp/update-arkos.tar
+echo "[OTA] Update staged. Reboot device to apply update." >> "$LOGFILE"
+echo "[OTA] Done."
+
+# You may want to trigger a reboot or let the user do it.
+# Uncomment the following line for automatic reboot (optional)
+# reboot
