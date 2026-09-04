@@ -43,15 +43,17 @@ jobs:
               zip \
               ca-certificates
 
-            # 2. Compile EmulationStation pointing explicitly to the source root
-            mkdir -p build
-            cd build
-            cmake -DCMAKE_BUILD_TYPE=Release "$GITHUB_WORKSPACE"
+            # Store the current repository root inside QEMU
+            REPO_ROOT="${PWD}"
+
+            # 2. Compile EmulationStation
+            mkdir -p build && cd build
+            cmake -DCMAKE_BUILD_TYPE=Release "$REPO_ROOT"
             make -j$(nproc)
-            cd "$GITHUB_WORKSPACE"
+            cd "$REPO_ROOT"
 
             # 3. Assemble flattened release package
-            PACKAGE_DIR="$GITHUB_WORKSPACE/build_output/package"
+            PACKAGE_DIR="$REPO_ROOT/build_output/package"
             mkdir -p "$PACKAGE_DIR"
 
             # Copy compiled executable
@@ -62,14 +64,14 @@ jobs:
               cp -r resources "$PACKAGE_DIR/"
             fi
 
-            # Copy installation and daemon scripts if present
+            # Copy installation and daemon scripts if present in repo root
             [ -f "es_patch.sh" ] && cp es_patch.sh "$PACKAGE_DIR/"
             [ -f "mcu_led_daemon.sh" ] && cp mcu_led_daemon.sh "$PACKAGE_DIR/"
             [ -f "update_check.sh" ] && cp update_check.sh "$PACKAGE_DIR/"
 
             # 4. Create ZIP artifact containing all flat files
             cd "$PACKAGE_DIR"
-            zip -r "$GITHUB_WORKSPACE/build_output/emulationstation-fcamod-m9pro.zip" .
+            zip -r "$REPO_ROOT/build_output/emulationstation-fcamod-m9pro.zip" .
 
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
