@@ -83,44 +83,56 @@ jobs:
             python3 -c '
             import os, re
 
-            # 1. Patch declaration in Renderer.h
-            for root, dirs, files in os.walk("."):
-                for f in files:
-                    if f == "Renderer.h":
-                        h_path = os.path.join(root, f)
-                        with open(h_path, "r") as file:
-                            content = file.read()
-                        if "SDL_Window* getSDLWindow()" not in content:
-                            if "namespace Renderer" in content:
-                                content = re.sub(r"(namespace\s+Renderer\s*\{)", r"\1\n    SDL_Window* getSDLWindow();", content, count=1)
-                            elif "class Renderer" in content:
-                                content = re.sub(r"(class\s+Renderer\s*\{)", r"\1\npublic:\n    static SDL_Window* getSDLWindow();", content, count=1)
-                            with open(h_path, "w") as file:
-                                file.write(content)
+            es_dir = "/tmp/es-source"
 
-            # 2. Patch definitions in all Renderer *.cpp files
-            for root, dirs, files in os.walk("."):
+            # 1. Patch Renderer.h declaration
+            ren_h = None
+            for root, dirs, files in os.walk(es_dir):
+                if "Renderer.h" in files:
+                    ren_h = os.path.join(root, "Renderer.h")
+                    break
+
+            if ren_h:
+                with open(ren_h, "r") as f:
+                    h_content = f.read()
+                if "getSDLWindow()" not in h_content:
+                    if "namespace Renderer" in h_content:
+                        h_content = re.sub(r"(namespace\s+Renderer\s*\{)", r"\1\n    SDL_Window* getSDLWindow();", h_content, count=1)
+                    elif "class Renderer" in h_content:
+                        h_content = re.sub(r"(class\s+Renderer\s*\{)", r"\1\npublic:\n    static SDL_Window* getSDLWindow();", h_content, count=1)
+                    with open(ren_h, "w") as f:
+                        f.write(h_content)
+
+            # 2. Patch Renderer *.cpp implementation files deterministically
+            for root, dirs, files in os.walk(os.path.join(es_dir, "es-core")):
                 for f in files:
                     if f.startswith("Renderer") and f.endswith(".cpp"):
                         cpp_path = os.path.join(root, f)
                         with open(cpp_path, "r") as file:
                             content = file.read()
 
-                        # Verify definition signature is missing (ignoring call sites)
-                        if "SDL_Window* getSDLWindow()" not in content and "SDL_Window* Renderer::getSDLWindow()" not in content:
-                            win_var = "sdlWindow" if "sdlWindow" in content else ("window" if "window" in content else "mWindow")
-                            
-                            if "namespace Renderer" in content:
-                                last_brace = content.rfind("}")
-                                if last_brace != -1:
-                                    func_impl = f"\n    SDL_Window* getSDLWindow() {{ return {win_var}; }}\n"
-                                    new_content = content[:last_brace] + func_impl + content[last_brace:]
-                                    with open(cpp_path, "w") as file:
-                                        file.write(new_content)
-                            elif "class Renderer" in content:
-                                func_impl = f"\nSDL_Window* Renderer::getSDLWindow() {{ return {win_var}; }}\n"
-                                with open(cpp_path, "a") as file:
-                                    file.write(func_impl)
+                        if "getSDLWindow()" in content:
+                            continue
+
+                        if "namespace Renderer" in content:
+                            content = re.sub(
+                                r"(namespace\s+Renderer\s*\{)",
+                                r"\1\n    static SDL_Window* mGpuWindow = nullptr;\n    SDL_Window* getSDLWindow() { return mGpuWindow ? mGpuWindow : SDL_GL_GetCurrentWindow(); }\n",
+                                content,
+                                count=1
+                            )
+                            content = re.sub(
+                                r"(SDL_CreateWindow\s*\(.*?\);)",
+                                r"\1 mGpuWindow = SDL_GL_GetCurrentWindow();",
+                                content,
+                                flags=re.DOTALL
+                            )
+                            with open(cpp_path, "w") as file:
+                                file.write(content)
+                        elif "class Renderer" in content:
+                            content += "\nstatic SDL_Window* mGpuWindow = nullptr;\nSDL_Window* Renderer::getSDLWindow() { return mGpuWindow ? mGpuWindow : SDL_GL_GetCurrentWindow(); }\n"
+                            with open(cpp_path, "w") as file:
+                                file.write(content)
             '
 
             echo "[+] Step 5: Configuring and compiling EmulationStation against GLIBC 2.31..."
