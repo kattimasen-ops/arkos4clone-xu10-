@@ -36,10 +36,10 @@ jobs:
             # Run Python patcher
             python3 .github/scripts/patch_es_source.py
 
-            # Build ES with Cortex-A35 optimization flags
+            # Build ES with safe optimization flags to avoid OOM crash under QEMU
             cd es-source
-            export CFLAGS="-mcpu=cortex-a35 -mtune=cortex-a35 -O3 -pipe -fno-strict-aliasing -Wno-unused-result -Wno-error"
-            export CXXFLAGS="-mcpu=cortex-a35 -mtune=cortex-a35 -O3 -pipe -std=c++17 -fno-strict-aliasing -static-libgcc -static-libstdc++ -Wno-unused-result -Wno-error"
+            export CFLAGS="-mcpu=cortex-a35 -mtune=cortex-a35 -O2 -pipe -fno-strict-aliasing -Wno-unused-result -Wno-error"
+            export CXXFLAGS="-mcpu=cortex-a35 -mtune=cortex-a35 -O2 -pipe -std=c++17 -fno-strict-aliasing -static-libgcc -static-libstdc++ -Wno-unused-result -Wno-error"
             export LDFLAGS="-static-libgcc -static-libstdc++"
 
             if [ -f premake5.lua ]; then
@@ -50,11 +50,11 @@ jobs:
                 cp /tmp/premake-core/bin/release/premake5 /usr/local/bin/premake5
               fi
               premake5 gmake2
-              make -j"$(nproc)" config=release CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS" LDFLAGS="$LDFLAGS"
+              make -j2 config=release CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS" LDFLAGS="$LDFLAGS"
             elif [ -f CMakeLists.txt ]; then
               mkdir -p build && cd build
               cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_STANDARD=17
-              make -j"$(nproc)"
+              make -j2
             else
               echo "[!] Kein unterstütztes Build-System gefunden."
               exit 1
