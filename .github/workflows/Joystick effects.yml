@@ -18,31 +18,33 @@ jobs:
 
       - name: Set up ARM64 Cross-Compilation Architecture
         run: |
+          # 1. Enable arm64 architecture
           sudo dpkg --add-architecture arm64
 
-          # Clear default runner sources to avoid arm64 lookup on standard x86_64 mirrors
-          sudo rm -f /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources
+          # 2. Wipe ALL default runner sources (both .list and .sources DEB822 files)
+          sudo rm -rf /etc/apt/sources.list /etc/apt/sources.list.d/*
 
-          # Direct amd64 requests exclusively to standard Ubuntu mirrors
+          # 3. Direct x86_64 (amd64) requests strictly to standard Ubuntu mirrors
           cat << 'EOF' | sudo tee /etc/apt/sources.list
           deb [arch=amd64] http://azure.archive.ubuntu.com/ubuntu/ jammy main restricted universe multiverse
           deb [arch=amd64] http://azure.archive.ubuntu.com/ubuntu/ jammy-updates main restricted universe multiverse
           deb [arch=amd64] http://security.ubuntu.com/ubuntu/ jammy-security main restricted universe multiverse
           EOF
 
-          # Direct arm64 requests exclusively to ports.ubuntu.com
+          # 4. Direct ARM64 requests strictly to ports.ubuntu.com
           cat << 'EOF' | sudo tee /etc/apt/sources.list.d/arm64-ports.list
           deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe multiverse
           deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-updates main restricted universe multiverse
           deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-security main restricted universe multiverse
           EOF
 
+          # 5. Refresh index and install build dependencies
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
             build-essential cmake pkg-config git python3 binutils \
             libsdl2-dev:arm64 libsdl2-mixer-dev:arm64 libfreeimage-dev:arm64 libfreetype6-dev:arm64 \
-            libcurl4-openssl-dev:arm64 libasound2-dev:arm64 libgl1-mesa-dev:arm64 \
+            libcurl4-openssl-dev:arm64 libasound2-dev:arm64 libgl1-mesa-dev:arm64 libglu1-mesa-dev:arm64 \
             libeigen3-dev rapidjson-dev \
             libboost-system-dev:arm64 libboost-filesystem-dev:arm64 libboost-date-time-dev:arm64 \
             libboost-locale-dev:arm64 libboost-serialization-dev:arm64 \
@@ -60,6 +62,11 @@ jobs:
         run: |
           cd es-source
           
+          # Force pkg-config to search the ARM64 multiarch package directory
+          export PKG_CONFIG_PATH="/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig"
+          export PKG_CONFIG_LIBDIR="/usr/lib/aarch64-linux-gnu/pkgconfig"
+          export PKG_CONFIG_SYSROOT_DIR="/"
+
           export CFLAGS="-mcpu=cortex-a35 -mtune=cortex-a35 -O2 -pipe -fno-strict-aliasing"
           export CXXFLAGS="-mcpu=cortex-a35 -mtune=cortex-a35 -O2 -pipe -std=c++17 -fno-strict-aliasing"
 
@@ -69,6 +76,11 @@ jobs:
             -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
             -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
             -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
+            -DCMAKE_FIND_ROOT_PATH="/usr/aarch64-linux-gnu;/usr/lib/aarch64-linux-gnu" \
+            -DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER \
+            -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY \
+            -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY \
+            -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=ONLY \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CXX_STANDARD=17
           
