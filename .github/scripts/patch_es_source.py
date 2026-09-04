@@ -25,6 +25,68 @@ MAX_ANCHOR_DISTANCE = 2000
 
 ANCHOR_PATTERN = re.compile(r'"(flow|rainbow|breathing_white|static_white)"')
 
+# --------------------------------------------------------------------------
+# Renderer::getSDLWindow() linker fix.
+#
+# christianhaitian/EmulationStation-fcamod's Renderer_GL21.cpp calls
+# Renderer::getSDLWindow() (from swapBuffers() and createContext()) but the
+# fork never actually defines it for this build configuration, producing:
+#   undefined reference to `Renderer::getSDLWindow()'
+# This was a documented required fix that never made it into this version
+# of the patcher. Injected directly into the SAME file(s) that call it
+# (rather than e.g. main.cpp) so there is zero cross-translation-unit
+# linkage risk - it's defined and used in the same object file.
+# --------------------------------------------------------------------------
+SDL_WINDOW_FIX = """
+// === ES_CUSTOM_PATCH: getSDLWindow() fix ===
+#include <SDL2/SDL.h>
+namespace Renderer {
+    SDL_Window* getSDLWindow() { return SDL_GL_GetCurrentWindow(); }
+}
+// === END ES_CUSTOM_PATCH ===
+"""
+
+
+def patch_renderer_sdl_window():
+    source_root = get_source_root()
+
+    candidates = []
+    for root, _, files in os.walk(source_root):
+        for file in files:
+            if file.startswith("Renderer") and file.endswith(".cpp"):
+                candidates.append(os.path.join(root, file))
+
+    if not candidates:
+        print("[!] No Renderer*.cpp files found - skipping getSDLWindow() fix.")
+        return
+
+    fixed_any = False
+    for filepath in candidates:
+        with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        references_it = "getSDLWindow" in content
+        already_defined = (
+            "ES_CUSTOM_PATCH: getSDLWindow() fix" in content
+            or re.search(r"SDL_Window\s*\*\s*getSDLWindow\s*\(\s*\)\s*\{", content) is not None
+        )
+
+        if not references_it:
+            continue
+
+        if already_defined:
+            print(f"[i] getSDLWindow() already defined in {filepath}, skipping.")
+            continue
+
+        content = content.rstrip() + "\n" + SDL_WINDOW_FIX
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(content)
+        print(f"[+] Injected Renderer::getSDLWindow() definition into: {filepath}")
+        fixed_any = True
+
+    if not fixed_any:
+        print("[*] No file needed the getSDLWindow() fix (already present or not referenced).")
+
 
 def get_source_root():
     """Return the source directory from CLI arg, ENV, or default."""
@@ -105,4 +167,6 @@ def patch_joystick_menu():
 
 
 if __name__ == "__main__":
+    patch_renderer_sdl_window()
     patch_joystick_menu()
+    
