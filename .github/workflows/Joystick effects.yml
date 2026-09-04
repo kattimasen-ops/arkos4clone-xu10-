@@ -20,45 +20,50 @@ jobs:
           distro: ubuntu20.04
           githubToken: ${{ github.token }}
           run: |
-            # Capture absolute path of the repository root
+            # 1. Capture host absolute workspace reference
             WORKSPACE_ROOT="${PWD}"
-            
-            # 1. Update system and install dependencies
+
+            # 2. Install target build tools and libraries
             apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
               build-essential cmake git pkg-config libsdl2-dev libfreeimage-dev \
               libfreetype6-dev libcurl4-openssl-dev libasound2-dev libgl1-mesa-dev \
               libgles2-mesa-dev libboost-system-dev libboost-filesystem-dev \
               libboost-date-time-dev libboost-locale-dev rapidjson-dev zip ca-certificates
 
-            # 2. Auto-detect EmulationStation source directory
-            echo "[+] Searching for CMakeLists.txt in $WORKSPACE_ROOT..."
-            SRC_FILE=$(find "$WORKSPACE_ROOT" -name "CMakeLists.txt" | head -n 1)
+            # 3. Smart Search: Find the exact CMakeLists.txt belonging to EmulationStation
+            echo "[+] Locating official EmulationStation CMakeLists.txt..."
+            SRC_FILE=""
+            for file in $(find "$WORKSPACE_ROOT" -name "CMakeLists.txt"); do
+              if grep -qi "emulationstation" "$file"; then
+                SRC_FILE="$file"
+                break
+              fi
+            done
 
             if [ -z "$SRC_FILE" ]; then
-              echo "[CRITICAL ERROR] CMakeLists.txt not found anywhere in the repository!"
+              echo "[CRITICAL ERROR] Could not find the EmulationStation source root CMakeLists.txt!"
               exit 1
             fi
 
             SRC_DIR=$(dirname "$SRC_FILE")
-            echo "[+] Found EmulationStation source at: $SRC_DIR"
+            echo "[+] Found true EmulationStation source at: $SRC_DIR"
             cd "$SRC_DIR"
 
-            # 3. Compile EmulationStation against GLIBC 2.31
+            # 4. Compile EmulationStation against GLIBC 2.31
             mkdir -p build && cd build
             cmake -DCMAKE_BUILD_TYPE=Release ..
             make -j$(nproc)
 
-            # 4. Assemble flattened release package
+            # 5. Assemble flattened release package structure
             PACKAGE_DIR="$WORKSPACE_ROOT/build_output/package"
             mkdir -p "$PACKAGE_DIR"
 
-            # Copy compiled executable and resources
+            # Copy binary and UI resource directory
             cp emulationstation "$PACKAGE_DIR/"
             [ -d "../resources" ] && cp -r "../resources" "$PACKAGE_DIR/"
 
-            # Return to repo root to find scripts
+            # Return to repo root to collect helper scripts safely
             cd "$WORKSPACE_ROOT"
-
             for script in es_patch.sh mcu_led_daemon.sh update_check.sh; do
               if [ -f "$script" ]; then
                 cp "$script" "$PACKAGE_DIR/"
@@ -67,7 +72,7 @@ jobs:
               fi
             done
 
-            # 5. Create ZIP artifact containing all flat files
+            # 6. Generate final flattened ZIP artifact
             cd "$PACKAGE_DIR"
             zip -r "$WORKSPACE_ROOT/build_output/emulationstation-fcamod-m9pro.zip" .
 
