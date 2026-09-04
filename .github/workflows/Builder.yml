@@ -14,12 +14,26 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      # BUGFIX: "distro: ubuntu" + "base_image: ubuntu:20.04" is not a
+      # documented/valid combination for this action. For a custom base
+      # image, both arch and distro must be "none" and the platform is
+      # given as part of base_image itself. See the action's README.
+      # NOTE: pulling the arm64 variant of ubuntu:20.04 from Docker Hub
+      # has been reported failing for other users recently (deprecated
+      # manifest for that architecture/tag). If this step starts failing
+      # with an image-resolution error rather than a compile error, that's
+      # why - the documented workaround is this exact
+      # "--platform=linux/aarch64 ubuntu:20.04" form, but if Ubuntu 20.04
+      # arm64 truly stops resolving, the next fallback to try is
+      # ubuntu:22.04 (GLIBC 2.35) - note that does raise the minimum GLIBC
+      # your target device needs, so test that binary carefully before
+      # relying on it.
       - name: Set up QEMU & Run on ARM64 Container (Ubuntu 20.04 / GLIBC 2.31)
         uses: uraimo/run-on-arch-action@v3
         with:
-          arch: aarch64
-          distro: ubuntu
-          base_image: ubuntu:20.04
+          arch: none
+          distro: none
+          base_image: '--platform=linux/aarch64 ubuntu:20.04'
           githubToken: ${{ github.token }}
           run: |
             set -euo pipefail
@@ -44,7 +58,7 @@ jobs:
             mkdir -p build && cd build
             meson ..
             ninja
-            
+
             cp -r librga.so* /usr/lib/aarch64-linux-gnu/ 2>/dev/null || true
             cp -r librga.so* /usr/lib/ 2>/dev/null || true
             cd ..
@@ -66,7 +80,7 @@ jobs:
             mkdir -p /usr/include/go2
             cp src/*.h /usr/include/go2/
             cp -P libgo2.so* /usr/lib/aarch64-linux-gnu/ 2>/dev/null || cp -P libgo2.so* /usr/lib/ 2>/dev/null || true
-            
+
             cd /usr/lib/aarch64-linux-gnu/ 2>/dev/null || cd /usr/lib/
             if ls libgo2.so.* 1> /dev/null 2>&1 && [ ! -e libgo2.so ]; then
               ln -s $(ls libgo2.so.* | head -n 1) libgo2.so
@@ -74,11 +88,11 @@ jobs:
 
             echo "[+] Step 4: Cloning source and executing patcher script..."
             git clone --recursive --depth=1 https://github.com/christianhaitian/EmulationStation-fcamod.git /tmp/es-source
-            
+
             export ES_SOURCE_DIR="/tmp/es-source"
             python3 "$WORKSPACE_ROOT/.github/scripts/patch_es_source.py"
 
-            echo "[+] Step 5: Configuring and compiling EmulationStation with $ORIGIN RPATH..."
+            echo "[+] Step 5: Configuring and compiling EmulationStation with \$ORIGIN RPATH..."
             cd /tmp/es-source
             mkdir -p build && cd build
             cmake -DCMAKE_BUILD_TYPE=Release \
@@ -86,7 +100,6 @@ jobs:
             make -j$(nproc)
 
             echo "[+] Step 6: Verifying compiled binary architecture..."
-            # Pass the actual binary path to the verify script
             ES_BIN_PATH="/tmp/es-source/build/emulationstation"
             python3 "$WORKSPACE_ROOT/.github/scripts/verify_es_binary.py" "$ES_BIN_PATH"
 
@@ -107,7 +120,7 @@ jobs:
             if [ -d ".github/scripts" ]; then
               find .github/scripts -maxdepth 1 -name "*.sh" -exec cp {} "$PACKAGE_DIR/" \; 2>/dev/null || true
             fi
-            
+
             chmod +x "$PACKAGE_DIR"/*.sh 2>/dev/null || true
 
             echo "[+] Step 8: Archiving build artifacts with symlink preservation (-y)..."
@@ -121,3 +134,4 @@ jobs:
           name: emulationstation-fcamod-m9pro
           path: build_output/emulationstation-fcamod-m9pro.zip
           retention-days: 7
+          
