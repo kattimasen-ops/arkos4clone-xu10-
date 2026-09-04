@@ -13,44 +13,42 @@ jobs:
       - name: Checkout Source Code
         uses: actions/checkout@v4
 
-      - name: Build Native ARM64 Binary via QEMU (Ubuntu 20.04)
+      - name: Build Native ARM64 Binary via QEMU (Ubuntu 20.04 / GLIBC 2.31)
         uses: uraimo/run-on-arch-action@v2
         with:
           arch: aarch64
           distro: ubuntu20.04
           githubToken: ${{ github.token }}
           run: |
-            # 1. Capture host absolute workspace reference
             WORKSPACE_ROOT="${PWD}"
 
-            # 2. Install target build tools and libraries
+            # Install complete and exact build dependencies for EmulationStation-fcamod
             apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-              build-essential cmake git pkg-config libsdl2-dev libfreeimage-dev \
-              libfreetype6-dev libcurl4-openssl-dev libasound2-dev libgl1-mesa-dev \
-              libgles2-mesa-dev libboost-system-dev libboost-filesystem-dev \
-              libboost-date-time-dev libboost-locale-dev rapidjson-dev zip ca-certificates
+              build-essential cmake git pkg-config libsdl2-dev libsdl2-mixer-dev \
+              libfreeimage-dev libfreetype6-dev libcurl4-openssl-dev libasound2-dev \
+              libgl1-mesa-dev libgles2-mesa-dev libboost-system-dev libboost-filesystem-dev \
+              libboost-date-time-dev libboost-locale-dev rapidjson-dev zip ca-certificates \
+              libvlc-dev libvlccore-dev vlc-bin
 
-            # 3. Automatically clone the official ArkOS EmulationStation source repository
+            # Clone official source code compatible with ArkOS ports
             echo "[+] Cloning official EmulationStation-fcamod source..."
             git clone --recursive --depth=1 https://github.com/christianhaitian/EmulationStation-fcamod.git /tmp/es-source
             
-            SRC_DIR="/tmp/es-source"
-            cd "$SRC_DIR"
+            cd /tmp/es-source
 
-            # 4. Compile EmulationStation against GLIBC 2.31
+            # Compile release build targeting exact host constraints
             mkdir -p build && cd build
             cmake -DCMAKE_BUILD_TYPE=Release ..
             make -j$(nproc)
 
-            # 5. Assemble flattened release package structure
+            # Package binary and UI resources into a flattened layout
             PACKAGE_DIR="$WORKSPACE_ROOT/build_output/package"
             mkdir -p "$PACKAGE_DIR"
 
-            # Copy compiled binary and UI resource directory
             cp emulationstation "$PACKAGE_DIR/"
             [ -d "../resources" ] && cp -r "../resources" "$PACKAGE_DIR/"
 
-            # Return to repo root to collect your helper scripts safely
+            # Collect helper scripts from repository root
             cd "$WORKSPACE_ROOT"
             for script in es_patch.sh mcu_led_daemon.sh update_check.sh; do
               if [ -f "$script" ]; then
@@ -60,7 +58,7 @@ jobs:
               fi
             done
 
-            # 6. Generate final flattened ZIP artifact
+            # Create artifact zip
             cd "$PACKAGE_DIR"
             zip -r "$WORKSPACE_ROOT/build_output/emulationstation-fcamod-m9pro.zip" .
 
