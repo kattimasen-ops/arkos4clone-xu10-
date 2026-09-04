@@ -86,8 +86,11 @@ if ! mountpoint -q /boot; then
     echo "[OTA] /boot not mounted. Attempting to mount..." >> "$LOGFILE"
     # Find the boot partition device (common on SD: /dev/mmcblk0p1 or /dev/root)
     # Try common patterns. If it fails, prompt user.
-    BOOT_DEV=$(ls /dev/mmcblk* 2>/dev/null | head -n1 | sed 's/p[0-9]*$//')"p1" 2>/dev/null || true
-    if [ -z "$BOOT_DEV" ]; then
+    # BUGFIX: the previous line's "2>/dev/null || true" was attached to a
+    # bare variable assignment (no command being run at that point), so it
+    # had no actual effect - harmless, but confusing. Cleaned up.
+    BOOT_DEV="$(ls /dev/mmcblk* 2>/dev/null | head -n1 | sed 's/p[0-9]*$//')p1"
+    if [ -z "$BOOT_DEV" ] || [ "$BOOT_DEV" = "p1" ]; then
         # Fallback to typical first partition
         BOOT_DEV="/dev/mmcblk0p1"
     fi
@@ -95,6 +98,12 @@ if ! mountpoint -q /boot; then
         echo "[OTA] Could not find BOOT partition device. Please mount manually and re-run." >> "$LOGFILE"
         exit 1
     fi
+    # CAUTION: this is a heuristic guess, not a verified boot partition.
+    # Mounting and writing to the wrong block device can damage the
+    # device's boot chain. If this ever runs on a layout other than the
+    # single-SD-card default (e.g. booting from eMMC, or a differently
+    # numbered partition), verify BOOT_DEV manually before trusting this.
+    echo "[OTA] Detected boot device candidate: $BOOT_DEV" >> "$LOGFILE"
     mkdir -p /mnt/boot
     mount "$BOOT_DEV" /mnt/boot || {
         echo "[OTA] Failed to mount $BOOT_DEV on /mnt/boot." >> "$LOGFILE"
