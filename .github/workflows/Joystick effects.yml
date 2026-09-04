@@ -37,35 +37,41 @@ jobs:
               libboost-locale-dev libboost-thread-dev rapidjson-dev \
               libvlc-dev libvlccore-dev vlc-bin zip ca-certificates libwacom-dev
 
-            echo "[+] Step 2: Building and installing official Rockchip librga for RK3326..."
+            echo "[+] Step 2: Deploying official Rockchip librga (Headers + Shared Libraries)..."
             git clone --depth=1 https://github.com/airockchip/librga.git /tmp/librga
-            cd /tmp/librga
-            mkdir -p build && cd build
-            cmake ..
-            make -j$(nproc)
             
-            # Install librga shared libraries and headers into system search paths
-            cp -P lib*.so* /usr/lib/aarch64-linux-gnu/ 2>/dev/null || cp -P *.so* /usr/lib/aarch64-linux-gnu/ 2>/dev/null || true
+            # Deploy headers
             mkdir -p /usr/include/rga
-            cp -r ../include/* /usr/include/rga/ 2>/dev/null || cp -r include/* /usr/include/rga/ 2>/dev/null || true
+            cp -rf /tmp/librga/include/* /usr/include/rga/ 2>/dev/null || true
+
+            # Deploy shared library binaries (.so*)
+            LIBRGA_SO=$(find /tmp/librga -name "librga.so*" | head -n 1)
+            if [ -n "$LIBRGA_SO" ]; then
+              cp -P /tmp/librga/**/librga.so* /usr/lib/aarch64-linux-gnu/ 2>/dev/null || cp -P /tmp/librga/*.so* /usr/lib/aarch64-linux-gnu/ 2>/dev/null || true
+            fi
             
             # Ensure linker symlink exists for -lrga
-            cd /usr/lib/aarch64-linux-gnu/
-            if [ ! -f librga.so ] && [ ! -L librga.so ]; then
-              first_so=$(ls librga.so.* 2>/dev/null | head -n 1)
-              [ -n "$first_so" ] && ln -s "$first_so" librga.so
+            cd /usr/lib/aarch64-linux-gnu/ 2>/dev/null || cd /usr/lib/
+            if ls librga.so.* 1> /dev/null 2>&1 && [ ! -e librga.so ]; then
+              ln -s $(ls librga.so.* | head -n 1) librga.so
             fi
 
-            echo "[+] Step 3: Automatically cloning and building libgo2 (Hardware Abstraction)..."
+            echo "[+] Step 3: Building and installing libgo2 (Headers + Shared Libraries)..."
             git clone --depth=1 https://github.com/OtherCrashOverride/libgo2.git /tmp/libgo2
             cd /tmp/libgo2
             premake4 gmake
             make -j$(nproc)
 
-            # Install go2 headers and shared libraries into strict system paths
+            # Deploy go2 headers and shared libraries into system paths
             mkdir -p /usr/include/go2
             cp src/*.h /usr/include/go2/
-            cp libgo2.so* /usr/lib/aarch64-linux-gnu/ 2>/dev/null || cp libgo2.so* /usr/lib/
+            cp -P libgo2.so* /usr/lib/aarch64-linux-gnu/ 2>/dev/null || cp -P libgo2.so* /usr/lib/ 2>/dev/null || true
+            
+            # Ensure linker symlink exists for libgo2
+            cd /usr/lib/aarch64-linux-gnu/ 2>/dev/null || cd /usr/lib/
+            if ls libgo2.so.* 1> /dev/null 2>&1 && [ ! -e libgo2.so ]; then
+              ln -s $(ls libgo2.so.* | head -n 1) libgo2.so
+            fi
 
             echo "[+] Step 4: Cloning official EmulationStation-fcamod source..."
             git clone --recursive --depth=1 https://github.com/christianhaitian/EmulationStation-fcamod.git /tmp/es-source
@@ -76,13 +82,17 @@ jobs:
             cmake -DCMAKE_BUILD_TYPE=Release ..
             make -j$(nproc)
 
-            echo "[+] Step 6: Assembling flattened release package..."
+            echo "[+] Step 6: Assembling flattened release package with all shared libraries..."
             PACKAGE_DIR="$WORKSPACE_ROOT/build_output/package"
             mkdir -p "$PACKAGE_DIR"
 
             # Copy binary and UI resources
             cp emulationstation "$PACKAGE_DIR/"
             [ -d "../resources" ] && cp -r "../resources" "$PACKAGE_DIR/"
+
+            # Bundle custom compiled shared libraries (.so*) so they deploy correctly on device
+            cp -P /usr/lib/aarch64-linux-gnu/libgo2.so* "$PACKAGE_DIR/" 2>/dev/null || cp -P /usr/lib/libgo2.so* "$PACKAGE_DIR/" 2>/dev/null || true
+            cp -P /usr/lib/aarch64-linux-gnu/librga.so* "$PACKAGE_DIR/" 2>/dev/null || cp -P /usr/lib/librga.so* "$PACKAGE_DIR/" 2>/dev/null || true
 
             # Smart Script Collector: Grabs helper scripts from root or .github/scripts/
             cd "$WORKSPACE_ROOT"
