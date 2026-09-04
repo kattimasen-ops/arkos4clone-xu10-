@@ -30,23 +30,11 @@ jobs:
               libgles2-mesa-dev libboost-system-dev libboost-filesystem-dev \
               libboost-date-time-dev libboost-locale-dev rapidjson-dev zip ca-certificates
 
-            # 3. Smart Search: Find the exact CMakeLists.txt belonging to EmulationStation
-            echo "[+] Locating official EmulationStation CMakeLists.txt..."
-            SRC_FILE=""
-            for file in $(find "$WORKSPACE_ROOT" -name "CMakeLists.txt"); do
-              if grep -qi "emulationstation" "$file"; then
-                SRC_FILE="$file"
-                break
-              fi
-            done
-
-            if [ -z "$SRC_FILE" ]; then
-              echo "[CRITICAL ERROR] Could not find the EmulationStation source root CMakeLists.txt!"
-              exit 1
-            fi
-
-            SRC_DIR=$(dirname "$SRC_FILE")
-            echo "[+] Found true EmulationStation source at: $SRC_DIR"
+            # 3. Automatically clone the official ArkOS EmulationStation source repository
+            echo "[+] Cloning official EmulationStation-fcamod source..."
+            git clone --recursive --depth=1 https://github.com/christianhaitian/EmulationStation-fcamod.git /tmp/es-source
+            
+            SRC_DIR="/tmp/es-source"
             cd "$SRC_DIR"
 
             # 4. Compile EmulationStation against GLIBC 2.31
@@ -58,11 +46,11 @@ jobs:
             PACKAGE_DIR="$WORKSPACE_ROOT/build_output/package"
             mkdir -p "$PACKAGE_DIR"
 
-            # Copy binary and UI resource directory
+            # Copy compiled binary and UI resource directory
             cp emulationstation "$PACKAGE_DIR/"
             [ -d "../resources" ] && cp -r "../resources" "$PACKAGE_DIR/"
 
-            # Return to repo root to collect helper scripts safely
+            # Return to repo root to collect your helper scripts safely
             cd "$WORKSPACE_ROOT"
             for script in es_patch.sh mcu_led_daemon.sh update_check.sh; do
               if [ -f "$script" ]; then
