@@ -6,7 +6,6 @@ HUE=0
 
 get_mode() {
     if [ -f "$SETTINGS_FILE" ]; then
-        # Check both possible setting names used by stock ArkOS variants
         MODE=$(grep -oP '(?<=<string name="JoystickLED" value=")[^"]*' "$SETTINGS_FILE" 2>/dev/null)
         if [ -z "$MODE" ]; then
             MODE=$(grep -oP '(?<=<string name="JoystickLEDMode" value=")[^"]*' "$SETTINGS_FILE" 2>/dev/null)
@@ -21,7 +20,6 @@ set_rgb() {
     /usr/bin/mcu_led "$1" "$2" "$3" 2>/dev/null
 }
 
-# Main animation tick
 while true; do
     CURRENT_MODE=$(get_mode)
 
@@ -93,7 +91,7 @@ while true; do
             sleep 0.08
             ;;
 
-        # --- NEW CUSTOM MODES (SAME EXECUTION ARCHITECTURE) ---
+        # --- NEW CUSTOM MODES ---
         "rainbow_wave")
             HUE=$(( (HUE + 15) % 360 ))
             set_rgb $(( (HUE * 255) / 360 )) 120 220
