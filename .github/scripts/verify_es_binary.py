@@ -5,7 +5,7 @@ import subprocess
 import glob
 
 WORKSPACE = os.environ.get("GITHUB_WORKSPACE", ".")
-SOURCE_ROOT = os.path.join(WORKSPACE, "es-source")
+SOURCE_ROOT = os.environ.get("ES_SOURCE_DIR", os.path.join(WORKSPACE, "es-source"))
 
 binary_path = None
 for p in glob.glob(os.path.join(SOURCE_ROOT, "**", "*"), recursive=True):
