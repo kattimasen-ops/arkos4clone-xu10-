@@ -22,7 +22,7 @@ jobs:
           setup: |
             mkdir -p "${PWD}/build_output"
           run: |
-            # 1. Update and install build tools & target libraries
+            # 1. Update system and install dependencies
             apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
               build-essential \
               cmake \
@@ -43,32 +43,33 @@ jobs:
               zip \
               ca-certificates
 
-            # 2. Compile EmulationStation natively for ARM64
-            mkdir build && cd build
-            cmake -DCMAKE_BUILD_TYPE=Release ..
+            # 2. Compile EmulationStation pointing explicitly to the source root
+            mkdir -p build
+            cd build
+            cmake -DCMAKE_BUILD_TYPE=Release "$GITHUB_WORKSPACE"
             make -j$(nproc)
-            cd ..
+            cd "$GITHUB_WORKSPACE"
 
-            # 3. Assemble flattened release package (no nested subfolders)
-            PACKAGE_DIR="${PWD}/build_output/package"
+            # 3. Assemble flattened release package
+            PACKAGE_DIR="$GITHUB_WORKSPACE/build_output/package"
             mkdir -p "$PACKAGE_DIR"
 
             # Copy compiled executable
             cp build/emulationstation "$PACKAGE_DIR/"
 
-            # Copy UI resources directory
+            # Copy UI resources directory if present
             if [ -d "resources" ]; then
               cp -r resources "$PACKAGE_DIR/"
             fi
 
-            # Copy installation and daemon scripts if present in repository root
+            # Copy installation and daemon scripts if present
             [ -f "es_patch.sh" ] && cp es_patch.sh "$PACKAGE_DIR/"
             [ -f "mcu_led_daemon.sh" ] && cp mcu_led_daemon.sh "$PACKAGE_DIR/"
             [ -f "update_check.sh" ] && cp update_check.sh "$PACKAGE_DIR/"
 
             # 4. Create ZIP artifact containing all flat files
             cd "$PACKAGE_DIR"
-            zip -r "${PWD}/../emulationstation-fcamod-m9pro.zip" .
+            zip -r "$GITHUB_WORKSPACE/build_output/emulationstation-fcamod-m9pro.zip" .
 
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
