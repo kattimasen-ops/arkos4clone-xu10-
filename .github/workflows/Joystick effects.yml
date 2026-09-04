@@ -37,10 +37,24 @@ jobs:
               libboost-locale-dev libboost-thread-dev rapidjson-dev \
               libvlc-dev libvlccore-dev vlc-bin zip ca-certificates libwacom-dev
 
-            echo "[+] Step 2: Setting up Rockchip RGA headers for RK3326 display acceleration..."
-            git clone --depth=1 https://github.com/amarula/rockchip-linux-rga.git /tmp/rockchip-rga
+            echo "[+] Step 2: Building and installing official Rockchip librga for RK3326..."
+            git clone --depth=1 https://github.com/airockchip/librga.git /tmp/librga
+            cd /tmp/librga
+            mkdir -p build && cd build
+            cmake ..
+            make -j$(nproc)
+            
+            # Install librga shared libraries and headers into system search paths
+            cp -P lib*.so* /usr/lib/aarch64-linux-gnu/ 2>/dev/null || cp -P *.so* /usr/lib/aarch64-linux-gnu/ 2>/dev/null || true
             mkdir -p /usr/include/rga
-            cp -f /tmp/rockchip-rga/*.h /usr/include/rga/
+            cp -r ../include/* /usr/include/rga/ 2>/dev/null || cp -r include/* /usr/include/rga/ 2>/dev/null || true
+            
+            # Ensure linker symlink exists for -lrga
+            cd /usr/lib/aarch64-linux-gnu/
+            if [ ! -f librga.so ] && [ ! -L librga.so ]; then
+              first_so=$(ls librga.so.* 2>/dev/null | head -n 1)
+              [ -n "$first_so" ] && ln -s "$first_so" librga.so
+            fi
 
             echo "[+] Step 3: Automatically cloning and building libgo2 (Hardware Abstraction)..."
             git clone --depth=1 https://github.com/OtherCrashOverride/libgo2.git /tmp/libgo2
