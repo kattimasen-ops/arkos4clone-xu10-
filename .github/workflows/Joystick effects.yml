@@ -22,10 +22,7 @@ jobs:
           setup: |
             mkdir -p "${PWD}/build_output"
           run: |
-            # 1. Force context into the container's mounted workspace root
-            cd /github/workspace
-
-            # 2. Update system and install build dependencies
+            # 1. Update system and install dependencies in Ubuntu 20.04 container
             apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
               build-essential \
               cmake \
@@ -46,32 +43,34 @@ jobs:
               zip \
               ca-certificates
 
-            # 3. Compile EmulationStation against GLIBC 2.31
-            mkdir -p build && cd build
-            cmake -DCMAKE_BUILD_TYPE=Release /github/workspace
+            # 2. Compile directly in-tree to prevent container mount path resolution failures
+            cmake -DCMAKE_BUILD_TYPE=Release .
             make -j$(nproc)
-            cd /github/workspace
 
-            # 4. Assemble flattened release package
-            PACKAGE_DIR="/github/workspace/build_output/package"
+            # 3. Assemble flattened package directory
+            PACKAGE_DIR="${PWD}/build_output/package"
             mkdir -p "$PACKAGE_DIR"
 
-            # Copy compiled executable
-            cp build/emulationstation "$PACKAGE_DIR/"
+            # Copy compiled binary
+            cp emulationstation "$PACKAGE_DIR/"
 
-            # Copy UI resources directory if present
+            # Copy UI resources folder
             if [ -d "resources" ]; then
               cp -r resources "$PACKAGE_DIR/"
             fi
 
-            # Copy installation and daemon scripts if present
-            [ -f "es_patch.sh" ] && cp es_patch.sh "$PACKAGE_DIR/"
-            [ -f "mcu_led_daemon.sh" ] && cp mcu_led_daemon.sh "$PACKAGE_DIR/"
-            [ -f "update_check.sh" ] && cp update_check.sh "$PACKAGE_DIR/"
+            # Locate and copy scripts (check repository root first, then .github/scripts/)
+            for script in es_patch.sh mcu_led_daemon.sh update_check.sh; do
+              if [ -f "$script" ]; then
+                cp "$script" "$PACKAGE_DIR/"
+              elif [ -f ".github/scripts/$script" ]; then
+                cp ".github/scripts/$script" "$PACKAGE_DIR/"
+              fi
+            done
 
-            # 5. Create ZIP artifact containing all flat files
+            # 4. Create flattened ZIP archive
             cd "$PACKAGE_DIR"
-            zip -r "/github/workspace/build_output/emulationstation-fcamod-m9pro.zip" .
+            zip -r "${PWD}/../emulationstation-fcamod-m9pro.zip" .
 
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
