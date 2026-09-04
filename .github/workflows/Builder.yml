@@ -17,12 +17,12 @@ jobs:
       - name: Set up QEMU & Run on ARM64 Container (Ubuntu 20.04 / GLIBC 2.31)
         uses: uraimo/run-on-arch-action@v3
         with:
-          arch: none
-          distro: none
-          base_image: '--platform=linux/aarch64 ubuntu:20.04'
+          arch: aarch64
+          distro: ubuntu
+          base_image: ubuntu:20.04
           githubToken: ${{ github.token }}
           run: |
-            set -e
+            set -euo pipefail
             WORKSPACE_ROOT="${PWD}"
 
             echo "[+] Step 1: Installing exhaustive ArkOS/RK3326 build dependencies..."
@@ -35,7 +35,7 @@ jobs:
               libdrm-dev libgbm-dev libinput-dev libevdev-dev libopenal-dev libpulse-dev \
               libboost-system-dev libboost-filesystem-dev libboost-date-time-dev \
               libboost-locale-dev libboost-thread-dev rapidjson-dev \
-              libvlc-dev libvlccore-dev vlc-bin zip ca-certificates libwacom-dev python3
+              libvlc-dev libvlccore-dev vlc-bin zip ca-certificates libwacom-dev python3 jq
 
             echo "[+] Step 2: Building and installing official Christian Haitian linux-rga..."
             git clone https://github.com/christianhaitian/linux-rga.git /tmp/linux-rga
@@ -45,7 +45,6 @@ jobs:
             meson ..
             ninja
             
-            # Deploy shared binaries and headers to standard paths expected by libgo2
             cp -r librga.so* /usr/lib/aarch64-linux-gnu/ 2>/dev/null || true
             cp -r librga.so* /usr/lib/ 2>/dev/null || true
             cd ..
@@ -53,96 +52,68 @@ jobs:
             cp -f drmrga.h rga.h RgaApi.h RockchipRgaMacro.h /usr/local/include/rga/ 2>/dev/null || true
             cp -f drmrga.h rga.h RgaApi.h RockchipRgaMacro.h /usr/include/rga/ 2>/dev/null || true
 
-            # Ensure linker symlink exists for -lrga
             cd /usr/lib/aarch64-linux-gnu/ 2>/dev/null || cd /usr/lib/
             if ls librga.so.* 1> /dev/null 2>&1 && [ ! -e librga.so ]; then
               ln -s $(ls librga.so.* | head -n 1) librga.so
             fi
 
-            echo "[+] Step 3: Building and installing libgo2 (Headers + Shared Libraries)..."
+            echo "[+] Step 3: Building and installing libgo2..."
             git clone --depth=1 https://github.com/OtherCrashOverride/libgo2.git /tmp/libgo2
             cd /tmp/libgo2
             premake4 gmake
             make -j$(nproc)
 
-            # Deploy go2 headers and shared libraries into system paths
             mkdir -p /usr/include/go2
             cp src/*.h /usr/include/go2/
             cp -P libgo2.so* /usr/lib/aarch64-linux-gnu/ 2>/dev/null || cp -P libgo2.so* /usr/lib/ 2>/dev/null || true
             
-            # Ensure linker symlink exists for libgo2
             cd /usr/lib/aarch64-linux-gnu/ 2>/dev/null || cd /usr/lib/
             if ls libgo2.so.* 1> /dev/null 2>&1 && [ ! -e libgo2.so ]; then
               ln -s $(ls libgo2.so.* | head -n 1) libgo2.so
             fi
 
-            echo "[+] Step 4: Cloning official EmulationStation-fcamod source and patching via Python..."
+            echo "[+] Step 4: Cloning source and executing patcher script..."
             git clone --recursive --depth=1 https://github.com/christianhaitian/EmulationStation-fcamod.git /tmp/es-source
+            
+            export ES_SOURCE_DIR="/tmp/es-source"
+            python3 "$WORKSPACE_ROOT/.github/scripts/patch_es_source.py"
+
+            echo "[+] Step 5: Configuring and compiling EmulationStation with $ORIGIN RPATH..."
             cd /tmp/es-source
-
-            # Precise C++ namespace patching
-            python3 -c '
-            import os, re
-
-            # 1. Inject declaration into namespace Renderer inside Renderer.h
-            for root, dirs, files in os.walk("."):
-                for f in files:
-                    if f == "Renderer.h":
-                        h_path = os.path.join(root, f)
-                        with open(h_path, "r") as file:
-                            content = file.read()
-                        if "getSDLWindow" not in content:
-                            content = re.sub(r"(namespace\s+Renderer\s*\{)", r"\1\n    SDL_Window* getSDLWindow();", content, count=1)
-                            with open(h_path, "w") as file:
-                                file.write(content)
-
-            # 2. Inject definition inside namespace Renderer scope in all Renderer *.cpp files
-            for root, dirs, files in os.walk("."):
-                for f in files:
-                    if f.startswith("Renderer") and f.endswith(".cpp"):
-                        cpp_path = os.path.join(root, f)
-                        with open(cpp_path, "r") as file:
-                            content = file.read()
-                        if "getSDLWindow" not in content and "namespace Renderer" in content:
-                            last_brace = content.rfind("}")
-                            if last_brace != -1:
-                                func_impl = "\n    SDL_Window* getSDLWindow() { return window; }\n"
-                                new_content = content[:last_brace] + func_impl + content[last_brace:]
-                                with open(cpp_path, "w") as file:
-                                    file.write(new_content)
-            '
-
-            echo "[+] Step 5: Configuring and compiling EmulationStation against GLIBC 2.31..."
             mkdir -p build && cd build
-            cmake -DCMAKE_BUILD_TYPE=Release ..
+            cmake -DCMAKE_BUILD_TYPE=Release \
+                  -DCMAKE_EXE_LINKER_FLAGS="-Wl,-rpath,'\$ORIGIN'" ..
             make -j$(nproc)
 
-            echo "[+] Step 6: Assembling flattened release package (Binary + Shared Libs + ALL Shell Scripts)..."
+            echo "[+] Step 6: Verifying compiled binary architecture..."
+            # Pass the actual binary path to the verify script
+            ES_BIN_PATH="/tmp/es-source/build/emulationstation"
+            python3 "$WORKSPACE_ROOT/.github/scripts/verify_es_binary.py" "$ES_BIN_PATH"
+
+            echo "[+] Step 7: Assembling release package with shared libraries..."
             PACKAGE_DIR="$WORKSPACE_ROOT/build_output/package"
             mkdir -p "$PACKAGE_DIR"
 
-            # Copy binary and UI resources
-            cp emulationstation "$PACKAGE_DIR/"
-            [ -d "../resources" ] && cp -r "../resources" "$PACKAGE_DIR/"
+            find /tmp/es-source -type f -name "emulationstation" -perm /111 -exec cp {} "$PACKAGE_DIR/" \;
+            if [ -d "/tmp/es-source/resources" ]; then
+              cp -r "/tmp/es-source/resources" "$PACKAGE_DIR/"
+            fi
 
-            # Bundle custom compiled shared libraries (.so*)
             cp -P /usr/lib/aarch64-linux-gnu/libgo2.so* "$PACKAGE_DIR/" 2>/dev/null || cp -P /usr/lib/libgo2.so* "$PACKAGE_DIR/" 2>/dev/null || true
             cp -P /usr/lib/aarch64-linux-gnu/librga.so* "$PACKAGE_DIR/" 2>/dev/null || cp -P /usr/lib/librga.so* "$PACKAGE_DIR/" 2>/dev/null || true
 
-            # Smart Multi-Script Collector: Grabs EVERY .sh script from repository
             cd "$WORKSPACE_ROOT"
             find . -maxdepth 1 -name "*.sh" -exec cp {} "$PACKAGE_DIR/" \; 2>/dev/null || true
             if [ -d ".github/scripts" ]; then
               find .github/scripts -maxdepth 1 -name "*.sh" -exec cp {} "$PACKAGE_DIR/" \; 2>/dev/null || true
             fi
             
-            # Ensure all scripts are executable
             chmod +x "$PACKAGE_DIR"/*.sh 2>/dev/null || true
 
-            echo "[+] Step 7: Creating final release archive..."
+            echo "[+] Step 8: Archiving build artifacts with symlink preservation (-y)..."
             cd "$PACKAGE_DIR"
-            zip -r "$WORKSPACE_ROOT/build_output/emulationstation-fcamod-m9pro.zip" .
-            echo "[✓] Build finished successfully!"
+            zip -r -y "$WORKSPACE_ROOT/build_output/emulationstation-fcamod-m9pro.zip" .
+            echo "[✓] Build completed successfully!"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
