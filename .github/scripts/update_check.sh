@@ -2,9 +2,10 @@
 # ==============================================================================
 # update_check.sh - ArkOS4Clones Automated OTA Update Engine
 # ==============================================================================
-#  - Scans GitHub API for new ArkOS4Clones releases
-#  - Displays release changelog notes
-#  - Downloads update-arkos.tar and firstboot.sh into /boot/ for system execution
+# Features:
+#  - Queries GitHub API for new ArkOS4Clones release tags
+#  - Downloads update-arkos.tar into /Easyroms/tools/
+#  - Downloads firstboot.sh into /boot/ (Boot Partition)
 # ==============================================================================
 
 set -euo pipefail
@@ -14,6 +15,16 @@ MARKER_FILE="/etc/arkos4clones_version"
 REPO_OWNER="arkos4clones"
 REPO_NAME="arkos4clones"
 BOOT_DIR="/boot"
+
+# Resolve Easyroms tools directory with fallbacks for SD1/SD2 mount variations
+TOOLS_DIR="/Easyroms/tools"
+if [ ! -d "/Easyroms" ]; then
+    if [ -d "/roms/tools" ]; then
+        TOOLS_DIR="/roms/tools"
+    elif [ -d "/roms2/tools" ]; then
+        TOOLS_DIR="/roms2/tools"
+    fi
+fi
 
 exec > >(tee -a "$LOGFILE") 2>&1
 
@@ -57,7 +68,6 @@ echo "Changelog:"
 echo "${CHANGELOG}"
 echo "=================================================="
 
-# Extract asset URLs for update-arkos.tar and firstboot.sh
 TAR_URL=$(echo "$API_RESPONSE" | jq -r '.assets[] | select(.name=="update-arkos.tar") | .browser_download_url')
 FIRSTBOOT_URL=$(echo "$API_RESPONSE" | jq -r '.assets[] | select(.name=="firstboot.sh") | .browser_download_url')
 
@@ -66,20 +76,28 @@ if [ -z "$TAR_URL" ] || [ -z "$FIRSTBOOT_URL" ]; then
     exit 1
 fi
 
-echo "[+] Staging download payload into ${BOOT_DIR}..."
+# Ensure staging target directories exist
+mkdir -p "$TOOLS_DIR"
+mkdir -p "$BOOT_DIR"
 
-# Download update payload
-curl -L -o "${BOOT_DIR}/update-arkos.tar" "$TAR_URL"
-echo "    [✓] Downloaded update-arkos.tar"
+echo "[+] Staging download payloads..."
 
+# Download update-arkos.tar into /Easyroms/tools/
+echo "    -> Downloading update-arkos.tar to ${TOOLS_DIR}..."
+curl -L -o "${TOOLS_DIR}/update-arkos.tar" "$TAR_URL"
+echo "       [✓] Downloaded update-arkos.tar"
+
+# Download firstboot.sh into Boot Partition (/boot/)
+echo "    -> Downloading firstboot.sh to ${BOOT_DIR}..."
 curl -L -o "${BOOT_DIR}/firstboot.sh" "$FIRSTBOOT_URL"
 chmod +x "${BOOT_DIR}/firstboot.sh"
-echo "    [✓] Downloaded firstboot.sh"
+echo "       [✓] Downloaded firstboot.sh"
 
-# Update local marker
+# Update local version marker
 echo "${LATEST_TAG}" > "$MARKER_FILE"
 
 echo "=================================================="
-echo "[✓] OTA Update payloads successfully installed to ${BOOT_DIR}!"
-echo "[!] Reboot your device now to apply the update."
+echo "[✓] Update archive placed in: ${TOOLS_DIR}/update-arkos.tar"
+echo "[✓] Firstboot script placed in: ${BOOT_DIR}/firstboot.sh"
+echo "[!] Reboot your device now to trigger the ArkOS update handler."
 echo "=================================================="
