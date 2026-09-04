@@ -35,7 +35,7 @@ jobs:
               libdrm-dev libgbm-dev libinput-dev libevdev-dev libopenal-dev libpulse-dev \
               libboost-system-dev libboost-filesystem-dev libboost-date-time-dev \
               libboost-locale-dev libboost-thread-dev rapidjson-dev \
-              libvlc-dev libvlccore-dev vlc-bin zip ca-certificates libwacom-dev python3
+              libvlc-dev libvlccore-dev vlc-bin zip ca-certificates libwacom-dev python3 jq
 
             echo "[+] Step 2: Building and installing official Christian Haitian linux-rga..."
             git clone https://github.com/christianhaitian/linux-rga.git /tmp/linux-rga
@@ -45,7 +45,7 @@ jobs:
             meson ..
             ninja
             
-            # Deploy shared binaries and headers to standard system paths
+            # Deploy shared binaries and headers to standard paths
             cp -r librga.so* /usr/lib/aarch64-linux-gnu/ 2>/dev/null || true
             cp -r librga.so* /usr/lib/ 2>/dev/null || true
             cd ..
@@ -53,7 +53,6 @@ jobs:
             cp -f drmrga.h rga.h RgaApi.h RockchipRgaMacro.h /usr/local/include/rga/ 2>/dev/null || true
             cp -f drmrga.h rga.h RgaApi.h RockchipRgaMacro.h /usr/include/rga/ 2>/dev/null || true
 
-            # Ensure linker symlinks exist for -lrga
             cd /usr/lib/aarch64-linux-gnu/ 2>/dev/null || cd /usr/lib/
             if ls librga.so.* 1> /dev/null 2>&1 && [ ! -e librga.so ]; then
               ln -s $(ls librga.so.* | head -n 1) librga.so
@@ -65,90 +64,38 @@ jobs:
             premake4 gmake
             make -j$(nproc)
 
-            # Deploy go2 headers and shared libraries into system paths
             mkdir -p /usr/include/go2
             cp src/*.h /usr/include/go2/
             cp -P libgo2.so* /usr/lib/aarch64-linux-gnu/ 2>/dev/null || cp -P libgo2.so* /usr/lib/ 2>/dev/null || true
             
-            # Ensure linker symlink exists for libgo2
             cd /usr/lib/aarch64-linux-gnu/ 2>/dev/null || cd /usr/lib/
             if ls libgo2.so.* 1> /dev/null 2>&1 && [ ! -e libgo2.so ]; then
               ln -s $(ls libgo2.so.* | head -n 1) libgo2.so
             fi
 
-            echo "[+] Step 4: Cloning source and executing bulletproof patcher..."
+            echo "[+] Step 4: Cloning source and executing patcher script..."
             git clone --recursive --depth=1 https://github.com/christianhaitian/EmulationStation-fcamod.git /tmp/es-source
-            cd /tmp/es-source
-
-            python3 -c '
-            import os, sys, re
-
-            patched = False
-            for root, dirs, files in os.walk("."):
-                for file in files:
-                    if file == "Renderer.h":
-                        path = os.path.join(root, file)
-                        with open(path, "r", encoding="utf-8") as f:
-                            content = f.read()
-                        
-                        # Add SDL2 header if missing
-                        if "<SDL2/SDL.h>" not in content:
-                            content = "#include <SDL2/SDL.h>\n" + content
-
-                        # Replace declaration with inline implementation using robust regex
-                        pattern = r"SDL_Window\s*\*\s*getSDLWindow\s*\(\s*\)\s*;"
-                        replacement = "inline SDL_Window* getSDLWindow() { return SDL_GL_GetCurrentWindow(); }"
-                        
-                        new_content, count = re.subn(pattern, replacement, content)
-                        
-                        if count > 0:
-                            with open(path, "w", encoding="utf-8") as f:
-                                f.write(new_content)
-                            print(f"[✓] Regex replacement successful in {path}")
-                            patched = True
-                        elif "SDL_GL_GetCurrentWindow" in content:
-                            print(f"[=] Already patched in {path}")
-                            patched = True
-                        else:
-                            # Fallback: force injection inside namespace Renderer
-                            injection = "\nnamespace Renderer {\n    inline SDL_Window* getSDLWindow() { return SDL_GL_GetCurrentWindow(); }\n}\n"
-                            if "#endif" in content:
-                                idx = content.rfind("#endif")
-                                new_content = content[:idx] + injection + content[idx:]
-                            else:
-                                new_content = content + injection
-                            
-                            with open(path, "w", encoding="utf-8") as f:
-                                f.write(new_content)
-                            print(f"[✓] Fallback injection successful in {path}")
-                            patched = True
-
-            if not patched:
-                print("[!] FATAL ERROR: Renderer.h was not found or could not be patched!")
-                sys.exit(1)
-            '
-
-            # Mandatory Verification Gate (Fail immediately if symbol isn't present)
-            echo "[+] Verifying patch in source tree..."
-            if ! grep -rn "SDL_GL_GetCurrentWindow" /tmp/es-source/; then
-                echo "[!] FATAL VERIFICATION ERROR: Symbol injection missing from source tree!" >&2
-                exit 1
-            fi
-            echo "[✓] Source patch verified 100%!"
+            
+            # Execute python patcher script for Joystick LEDs, OTA Menu, and Renderer Fix
+            export ES_SOURCE_DIR="/tmp/es-source"
+            python3 "$WORKSPACE_ROOT/.github/scripts/patch_es_source.py"
 
             echo "[+] Step 5: Configuring and compiling EmulationStation..."
+            cd /tmp/es-source
             mkdir -p build && cd build
             cmake -DCMAKE_BUILD_TYPE=Release ..
             make -j2
 
-            echo "[+] Step 6: Assembling release package..."
+            echo "[+] Step 6: Verifying compiled binary architecture..."
+            export GITHUB_WORKSPACE="$WORKSPACE_ROOT"
+            python3 "$WORKSPACE_ROOT/.github/scripts/verify_es_binary.py"
+
+            echo "[+] Step 7: Assembling release package..."
             PACKAGE_DIR="$WORKSPACE_ROOT/build_output/package"
             mkdir -p "$PACKAGE_DIR"
 
-            # Copy executable binary
+            # Copy binary and resources
             find /tmp/es-source -type f -name "emulationstation" -perm /111 -exec cp {} "$PACKAGE_DIR/" \;
-            
-            # Copy UI resources directory
             if [ -d "/tmp/es-source/resources" ]; then
               cp -r "/tmp/es-source/resources" "$PACKAGE_DIR/"
             fi
@@ -157,7 +104,7 @@ jobs:
             cp -P /usr/lib/aarch64-linux-gnu/libgo2.so* "$PACKAGE_DIR/" 2>/dev/null || cp -P /usr/lib/libgo2.so* "$PACKAGE_DIR/" 2>/dev/null || true
             cp -P /usr/lib/aarch64-linux-gnu/librga.so* "$PACKAGE_DIR/" 2>/dev/null || cp -P /usr/lib/librga.so* "$PACKAGE_DIR/" 2>/dev/null || true
 
-            # Collect scripts (.sh)
+            # Collect scripts (.sh) from repository root and .github/scripts/
             cd "$WORKSPACE_ROOT"
             find . -maxdepth 1 -name "*.sh" -exec cp {} "$PACKAGE_DIR/" \; 2>/dev/null || true
             if [ -d ".github/scripts" ]; then
@@ -166,7 +113,7 @@ jobs:
             
             chmod +x "$PACKAGE_DIR"/*.sh 2>/dev/null || true
 
-            echo "[+] Step 7: Archiving build artifacts..."
+            echo "[+] Step 8: Archiving build artifacts..."
             cd "$PACKAGE_DIR"
             zip -r "$WORKSPACE_ROOT/build_output/emulationstation-fcamod-m9pro.zip" .
             echo "[✓] Build completed successfully!"
