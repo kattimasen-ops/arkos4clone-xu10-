@@ -28,7 +28,7 @@ jobs:
             echo "[+] Step 1: Installing exhaustive ArkOS/RK3326 build dependencies..."
             export DEBIAN_FRONTEND=noninteractive
             apt-get update && apt-get install -y --no-install-recommends \
-              build-essential cmake git pkg-config premake4 \
+              build-essential cmake meson ninja-build git pkg-config premake4 \
               libsdl2-dev libsdl2-mixer-dev libsdl2-ttf-dev libsdl2-image-dev \
               libfreeimage-dev libfreetype6-dev libcurl4-openssl-dev libasound2-dev \
               libgl1-mesa-dev libgles2-mesa-dev libegl1-mesa-dev libglvnd-dev \
@@ -37,19 +37,22 @@ jobs:
               libboost-locale-dev libboost-thread-dev rapidjson-dev \
               libvlc-dev libvlccore-dev vlc-bin zip ca-certificates libwacom-dev
 
-            echo "[+] Step 2: Deploying official Rockchip librga (Headers + Shared Libraries)..."
-            git clone --depth=1 https://github.com/airockchip/librga.git /tmp/librga
+            echo "[+] Step 2: Building and installing official Christian Haitian linux-rga..."
+            git clone https://github.com/christianhaitian/linux-rga.git /tmp/linux-rga
+            cd /tmp/linux-rga
+            git checkout 1fc02d56d97041c86f01bc1284b7971c6098c5fb
+            meson build
+            cd build
+            meson compile
             
-            # Deploy headers
-            mkdir -p /usr/include/rga
-            cp -rf /tmp/librga/include/* /usr/include/rga/ 2>/dev/null || true
+            # Deploy shared binaries and headers to standard paths expected by libgo2
+            cp -r librga.so* /usr/lib/aarch64-linux-gnu/ 2>/dev/null || true
+            cp -r librga.so* /usr/lib/ 2>/dev/null || true
+            cd ..
+            mkdir -p /usr/local/include/rga /usr/include/rga
+            cp -f drmrga.h rga.h RgaApi.h RockchipRgaMacro.h /usr/local/include/rga/ 2>/dev/null || true
+            cp -f drmrga.h rga.h RgaApi.h RockchipRgaMacro.h /usr/include/rga/ 2>/dev/null || true
 
-            # Deploy shared library binaries (.so*)
-            LIBRGA_SO=$(find /tmp/librga -name "librga.so*" | head -n 1)
-            if [ -n "$LIBRGA_SO" ]; then
-              cp -P /tmp/librga/**/librga.so* /usr/lib/aarch64-linux-gnu/ 2>/dev/null || cp -P /tmp/librga/*.so* /usr/lib/aarch64-linux-gnu/ 2>/dev/null || true
-            fi
-            
             # Ensure linker symlink exists for -lrga
             cd /usr/lib/aarch64-linux-gnu/ 2>/dev/null || cd /usr/lib/
             if ls librga.so.* 1> /dev/null 2>&1 && [ ! -e librga.so ]; then
@@ -90,7 +93,7 @@ jobs:
             cp emulationstation "$PACKAGE_DIR/"
             [ -d "../resources" ] && cp -r "../resources" "$PACKAGE_DIR/"
 
-            # Bundle custom compiled shared libraries (.so*) so they deploy correctly on device
+            # Bundle custom compiled shared libraries (.so*) so they deploy cleanly on device
             cp -P /usr/lib/aarch64-linux-gnu/libgo2.so* "$PACKAGE_DIR/" 2>/dev/null || cp -P /usr/lib/libgo2.so* "$PACKAGE_DIR/" 2>/dev/null || true
             cp -P /usr/lib/aarch64-linux-gnu/librga.so* "$PACKAGE_DIR/" 2>/dev/null || cp -P /usr/lib/librga.so* "$PACKAGE_DIR/" 2>/dev/null || true
 
