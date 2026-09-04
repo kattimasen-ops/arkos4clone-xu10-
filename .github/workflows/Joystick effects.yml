@@ -8,67 +8,63 @@ permissions:
 
 jobs:
   build-es:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Build EmulationStation for ARM64 (RK3326 / Cortex-A35)
-        uses: uraimo/run-on-arch-action@v2
-        with:
-          arch: aarch64
-          distro: ubuntu22.04
-          githubToken: ${{ github.token }}
-          install: |
-            export DEBIAN_FRONTEND=noninteractive
-            export PYTHONDONTWRITEBYTECODE=1
-            apt-get update && apt-get install -y --no-install-recommends \
-              build-essential cmake pkg-config git \
-              libsdl2-dev libsdl2-mixer-dev libfreeimage-dev libfreetype6-dev \
-              libcurl4-openssl-dev libasound2-dev libgl1-mesa-dev \
-              libeigen3-dev rapidjson-dev \
-              libboost-system-dev libboost-filesystem-dev libboost-date-time-dev \
-              libboost-locale-dev libboost-serialization-dev \
-              libvlc-dev libvlccore-dev vlc-bin python3 fonts-droid-fallback binutils \
-              ca-certificates
-          run: |
-            # Clone source repository
-            git clone --depth 1 --recursive https://github.com/lcdyk0517/EmulationStation-fcamod.git es-source
+      - name: Set up ARM64 Cross-Compilation Architecture
+        run: |
+          sudo dpkg --add-architecture arm64
+          sudo sed -i 's/deb http/deb [arch=amd64,i386] http/g' /etc/apt/sources.list
+          sudo sed -i 's/deb \[arch=amd64,i386\] http:\/\/security/deb [arch=amd64,i386] http:\/\/security/g' /etc/apt/sources.list
+          
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-security main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
+          
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
+            build-essential cmake pkg-config git python3 binutils \
+            libsdl2-dev:arm64 libsdl2-mixer-dev:arm64 libfreeimage-dev:arm64 libfreetype6-dev:arm64 \
+            libcurl4-openssl-dev:arm64 libasound2-dev:arm64 libgl1-mesa-dev:arm64 \
+            libeigen3-dev rapidjson-dev \
+            libboost-system-dev:arm64 libboost-filesystem-dev:arm64 libboost-date-time-dev:arm64 \
+            libboost-locale-dev:arm64 libboost-serialization-dev:arm64 \
+            libvlc-dev:arm64 libvlccore-dev:arm64
 
-            # Run Python patcher using absolute repository workspace path
-            if [ -f "$GITHUB_WORKSPACE/.github/scripts/patch_es_source.py" ]; then
-              python3 "$GITHUB_WORKSPACE/.github/scripts/patch_es_source.py"
-            fi
+      - name: Clone & Patch Source Code
+        run: |
+          git clone --depth 1 --recursive https://github.com/lcdyk0517/EmulationStation-fcamod.git es-source
 
-            # Build ES with memory-safe flags (-O1 and -j1) to prevent QEMU OOM crashes
-            cd es-source
-            export CFLAGS="-mcpu=cortex-a35 -mtune=cortex-a35 -O1 -pipe -fno-strict-aliasing -Wno-unused-result -Wno-error"
-            export CXXFLAGS="-mcpu=cortex-a35 -mtune=cortex-a35 -O1 -pipe -std=c++17 -fno-strict-aliasing -static-libgcc -static-libstdc++ -Wno-unused-result -Wno-error"
-            export LDFLAGS="-static-libgcc -static-libstdc++"
+          if [ -f "$GITHUB_WORKSPACE/.github/scripts/patch_es_source.py" ]; then
+            python3 "$GITHUB_WORKSPACE/.github/scripts/patch_es_source.py"
+          fi
 
-            if [ -f premake5.lua ]; then
-              echo "[*] premake5.lua found - building with Premake5"
-              if ! command -v premake5 >/dev/null 2>&1; then
-                git clone --depth 1 https://github.com/premake/premake-core.git /tmp/premake-core
-                make -C /tmp/premake-core -f Bootstrap.mak linux
-                cp /tmp/premake-core/bin/release/premake5 /usr/local/bin/premake5
-              fi
-              premake5 gmake2
-              make -j1 config=release CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS" LDFLAGS="$LDFLAGS"
-            elif [ -f CMakeLists.txt ]; then
-              mkdir -p build && cd build
-              cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_STANDARD=17
-              make -j1
-            else
-              echo "[!] No supported build system found."
-              exit 1
-            fi
+      - name: Cross-Compile EmulationStation (Native Host -> ARM64)
+        run: |
+          cd es-source
+          
+          export CFLAGS="-mcpu=cortex-a35 -mtune=cortex-a35 -O2 -pipe -fno-strict-aliasing"
+          export CXXFLAGS="-mcpu=cortex-a35 -mtune=cortex-a35 -O2 -pipe -std=c++17 -fno-strict-aliasing"
 
-            # Execute verification script using absolute repository workspace path
-            if [ -f "$GITHUB_WORKSPACE/.github/scripts/verify_es_binary.py" ]; then
-              python3 "$GITHUB_WORKSPACE/.github/scripts/verify_es_binary.py"
-            fi
+          mkdir -p build && cd build
+          cmake .. \
+            -DCMAKE_SYSTEM_NAME=Linux \
+            -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
+            -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
+            -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_STANDARD=17
+          
+          make -j$(nproc)
+
+          cd "$GITHUB_WORKSPACE"
+          if [ -f "$GITHUB_WORKSPACE/.github/scripts/verify_es_binary.py" ]; then
+            python3 "$GITHUB_WORKSPACE/.github/scripts/verify_es_binary.py"
+          fi
 
       - name: Upload Built Binary & Companion Scripts
         uses: actions/upload-artifact@v4
