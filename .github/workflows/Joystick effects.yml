@@ -8,10 +8,10 @@ permissions:
 
 jobs:
   build-es:
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-24.04-arm[cite: 1]
     
     container:
-      image: ubuntu:20.04
+      image: ubuntu:20.04[cite: 1]
 
     steps:
       - name: Install System Dependencies
@@ -23,52 +23,55 @@ jobs:
             libcurl4-openssl-dev libasound2-dev libgl1-mesa-dev \
             libeigen3-dev libboost-all-dev rapidjson-dev \
             libvlc-dev libvlccore-dev vlc-bin python3 fonts-droid-fallback binutils \
-            ca-certificates
+            ca-certificates[cite: 1]
 
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4[cite: 1]
 
       - name: Clone EmulationStation-fcamod Source (Recursive)
         run: |
-          git clone --depth 1 --recursive https://github.com/lcdyk0517/EmulationStation-fcamod.git es-source
+          git clone --depth 1 --recursive https://github.com/lcdyk0517/EmulationStation-fcamod.git es-source[cite: 1]
 
       - name: Deep Scan Codebase & Auto-Integrate Custom LED Modes + OTA Menu
-        run: python3 .github/scripts/patch_es_source.py
+        run: python3 .github/scripts/patch_es_source.py[cite: 1]
 
       - name: Build EmulationStation Binary (compat toolchain)
-        working-directory: es-source
+        working-directory: es-source[cite: 1]
         env:
-          CFLAGS: "-mcpu=cortex-a35 -mtune=cortex-a35 -O3 -pipe -fno-strict-aliasing -Wno-unused-result -Wno-error"
-          CXXFLAGS: "-mcpu=cortex-a35 -mtune=cortex-a35 -O3 -pipe -std=c++17 -fno-strict-aliasing -static-libgcc -static-libstdc++ -Wno-unused-result -Wno-error"
-          LDFLAGS: "-static-libgcc -static-libstdc++"
+          CFLAGS: "-mcpu=cortex-a35 -mtune=cortex-a35 -O3 -pipe -fno-strict-aliasing -Wno-unused-result -Wno-error"[cite: 1]
+          CXXFLAGS: "-mcpu=cortex-a35 -mtune=cortex-a35 -O3 -pipe -std=c++17 -fno-strict-aliasing -static-libgcc -static-libstdc++ -Wno-unused-result -Wno-error"[cite: 1]
+          LDFLAGS: "-static-libgcc -static-libstdc++"[cite: 1]
         run: |
           set -e
-          if [ -f premake5.lua ]; then
-            echo "[*] premake5.lua gefunden - baue mit Premake5"
-            if ! command -v premake5 >/dev/null 2>&1; then
-              git clone --depth 1 https://github.com/premake/premake-core.git /tmp/premake-core
-              make -C /tmp/premake-core -f Bootstrap.mak linux
-              cp /tmp/premake-core/bin/release/premake5 /usr/local/bin/premake5
+          if [ -f premake5.lua ]; then[cite: 1]
+            echo "[*] premake5.lua gefunden - baue mit Premake5"[cite: 1]
+            if ! command -v premake5 >/dev/null 2>&1; then[cite: 1]
+              git clone --depth 1 https://github.com/premake/premake-core.git /tmp/premake-core[cite: 1]
+              make -C /tmp/premake-core -f Bootstrap.mak linux[cite: 1]
+              cp /tmp/premake-core/bin/release/premake5 /usr/local/bin/premake5[cite: 1]
             fi
-            premake5 gmake2
-            make -j"$(nproc)" config=release CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS" LDFLAGS="$LDFLAGS"
-          elif [ -f CMakeLists.txt ]; then
-            mkdir -p build && cd build
-            cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_STANDARD=17
-            make -j"$(nproc)"
+            premake5 gmake2[cite: 1]
+            make -j"$(nproc)" config=release CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS" LDFLAGS="$LDFLAGS"[cite: 1]
+          elif [ -f CMakeLists.txt ]; then[cite: 1]
+            mkdir -p build && cd build[cite: 1]
+            cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_STANDARD=17[cite: 1]
+            make -j"$(nproc)"[cite: 1]
           else
-            echo "[!] Kein unterstütztes Build-System gefunden."
-            exit 1
+            echo "[!] Kein unterstütztes Build-System gefunden."[cite: 1]
+            exit 1[cite: 1]
           fi
 
       - name: Verify Custom Strings in Compiled Binary
-        run: python3 .github/scripts/verify_es_binary.py
+        run: python3 .github/scripts/verify_es_binary.py[cite: 1]
 
-      - name: Upload Built Binary
-        uses: actions/upload-artifact@v4
+      - name: Upload Built Binary & Companion Scripts
+        uses: actions/upload-artifact@v4[cite: 1]
         with:
           name: emulationstation-fcamod-m9pro
           path: |
             es-source/**/emulationstation*
-          retention-days: 14
-          if-no-files-found: error
+            es-source/mcu_led_daemon.sh
+            es-source/update_check.sh
+            es_patch.sh
+          retention-days: 14[cite: 1]
+          if-no-files-found: error[cite: 1]
