@@ -25,22 +25,25 @@ jobs:
             set -e
             WORKSPACE_ROOT="${PWD}"
 
-            echo "[+] Step 1: Installing build prerequisites and premake4..."
+            echo "[+] Step 1: Installing exhaustive ArkOS/RK3326 build dependencies..."
             export DEBIAN_FRONTEND=noninteractive
             apt-get update && apt-get install -y --no-install-recommends \
-              build-essential cmake git pkg-config libsdl2-dev libsdl2-mixer-dev \
+              build-essential cmake git pkg-config premake4 \
+              libsdl2-dev libsdl2-mixer-dev libsdl2-ttf-dev libsdl2-image-dev \
               libfreeimage-dev libfreetype6-dev libcurl4-openssl-dev libasound2-dev \
-              libgl1-mesa-dev libgles2-mesa-dev libboost-system-dev libboost-filesystem-dev \
-              libboost-date-time-dev libboost-locale-dev rapidjson-dev zip ca-certificates \
-              libvlc-dev libvlccore-dev vlc-bin premake4 libevdev-dev
+              libgl1-mesa-dev libgles2-mesa-dev libegl1-mesa-dev libglvnd-dev \
+              libdrm-dev libgbm-dev libinput-dev libevdev-dev libopenal-dev libpulse-dev \
+              libboost-system-dev libboost-filesystem-dev libboost-date-time-dev \
+              libboost-locale-dev libboost-thread-dev rapidjson-dev \
+              libvlc-dev libvlccore-dev vlc-bin zip ca-certificates
 
-            echo "[+] Step 2: Automatically cloning and building libgo2..."
+            echo "[+] Step 2: Automatically cloning and building libgo2 (Hardware Abstraction)..."
             git clone --depth=1 https://github.com/OtherCrashOverride/libgo2.git /tmp/libgo2
             cd /tmp/libgo2
             premake4 gmake
             make -j$(nproc)
 
-            # Install headers and shared libraries to system paths
+            # Install go2 headers and shared libraries into system paths
             mkdir -p /usr/include/go2
             cp src/*.h /usr/include/go2/
             cp libgo2.so* /usr/lib/aarch64-linux-gnu/ 2>/dev/null || cp libgo2.so* /usr/lib/
@@ -49,12 +52,12 @@ jobs:
             git clone --recursive --depth=1 https://github.com/christianhaitian/EmulationStation-fcamod.git /tmp/es-source
             cd /tmp/es-source
 
-            echo "[+] Step 4: Configuring and compiling EmulationStation..."
+            echo "[+] Step 4: Configuring and compiling EmulationStation against GLIBC 2.31..."
             mkdir -p build && cd build
             cmake -DCMAKE_BUILD_TYPE=Release ..
             make -j$(nproc)
 
-            echo "[+] Step 5: Packaging build assets..."
+            echo "[+] Step 5: Assembling flattened release package..."
             PACKAGE_DIR="$WORKSPACE_ROOT/build_output/package"
             mkdir -p "$PACKAGE_DIR"
 
@@ -62,7 +65,7 @@ jobs:
             cp emulationstation "$PACKAGE_DIR/"
             [ -d "../resources" ] && cp -r "../resources" "$PACKAGE_DIR/"
 
-            # Copy any custom scripts from your root repo or .github/scripts if they exist
+            # Copy any custom scripts from root repository or .github/scripts/
             cd "$WORKSPACE_ROOT"
             for script in es_patch.sh mcu_led_daemon.sh update_check.sh; do
               if [ -f "$script" ]; then
@@ -75,10 +78,11 @@ jobs:
             echo "[+] Step 6: Creating final release archive..."
             cd "$PACKAGE_DIR"
             zip -r "$WORKSPACE_ROOT/build_output/emulationstation-fcamod-m9pro.zip" .
-            echo "[✓] Build complete successfully!"
+            echo "[✓] Build finished successfully!"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: emulationstation-fcamod-m9pro
           path: build_output/emulationstation-fcamod-m9pro.zip
+          retention-days: 7
