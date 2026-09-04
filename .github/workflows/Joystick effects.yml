@@ -9,60 +9,59 @@ permissions:
 jobs:
   build-es:
     runs-on: ubuntu-latest
-    
-    container:
-      image: ubuntu:20.04
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Install System Dependencies
-        run: |
-          export DEBIAN_FRONTEND=noninteractive
-          apt-get update && apt-get install -y \
-            build-essential cmake pkg-config git \
-            libsdl2-dev libsdl2-mixer-dev libfreeimage-dev libfreetype6-dev \
-            libcurl4-openssl-dev libasound2-dev libgl1-mesa-dev \
-            libeigen3-dev libboost-all-dev rapidjson-dev \
-            libvlc-dev libvlccore-dev vlc-bin python3 fonts-droid-fallback binutils \
-            ca-certificates
+      - name: Build EmulationStation for ARM64 (RK3326 / Cortex-A35)
+        uses: uraimo/run-on-arch-action@v2
+        with:
+          arch: aarch64
+          distro: ubuntu20.04
+          githubToken: ${{ github.token }}
+          install: |
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update && apt-get install -y \
+              build-essential cmake pkg-config git \
+              libsdl2-dev libsdl2-mixer-dev libfreeimage-dev libfreetype6-dev \
+              libcurl4-openssl-dev libasound2-dev libgl1-mesa-dev \
+              libeigen3-dev libboost-all-dev rapidjson-dev \
+              libvlc-dev libvlccore-dev vlc-bin python3 fonts-droid-fallback binutils \
+              ca-certificates
+          run: |
+            # Clone source repository
+            git clone --depth 1 --recursive https://github.com/lcdyk0517/EmulationStation-fcamod.git es-source
 
-      - name: Clone EmulationStation-fcamod Source (Recursive)
-        run: |
-          git clone --depth 1 --recursive https://github.com/lcdyk0517/EmulationStation-fcamod.git es-source
+            # Run Python patcher
+            python3 .github/scripts/patch_es_source.py
 
-      - name: Deep Scan Codebase & Auto-Integrate Custom LED Modes + OTA Menu
-        run: python3 .github/scripts/patch_es_source.py
+            # Build ES with Cortex-A35 optimization flags
+            cd es-source
+            export CFLAGS="-mcpu=cortex-a35 -mtune=cortex-a35 -O3 -pipe -fno-strict-aliasing -Wno-unused-result -Wno-error"
+            export CXXFLAGS="-mcpu=cortex-a35 -mtune=cortex-a35 -O3 -pipe -std=c++17 -fno-strict-aliasing -static-libgcc -static-libstdc++ -Wno-unused-result -Wno-error"
+            export LDFLAGS="-static-libgcc -static-libstdc++"
 
-      - name: Build EmulationStation Binary
-        working-directory: es-source
-        env:
-          CFLAGS: "-mcpu=cortex-a35 -mtune=cortex-a35 -O3 -pipe -fno-strict-aliasing -Wno-unused-result -Wno-error"
-          CXXFLAGS: "-mcpu=cortex-a35 -mtune=cortex-a35 -O3 -pipe -std=c++17 -fno-strict-aliasing -static-libgcc -static-libstdc++ -Wno-unused-result -Wno-error"
-          LDFLAGS: "-static-libgcc -static-libstdc++"
-        run: |
-          set -e
-          if [ -f premake5.lua ]; then
-            echo "[*] premake5.lua gefunden - baue mit Premake5"
-            if ! command -v premake5 >/dev/null 2>&1; then
-              git clone --depth 1 https://github.com/premake/premake-core.git /tmp/premake-core
-              make -C /tmp/premake-core -f Bootstrap.mak linux
-              cp /tmp/premake-core/bin/release/premake5 /usr/local/bin/premake5
+            if [ -f premake5.lua ]; then
+              echo "[*] premake5.lua gefunden - baue mit Premake5"
+              if ! command -v premake5 >/dev/null 2>&1; then
+                git clone --depth 1 https://github.com/premake/premake-core.git /tmp/premake-core
+                make -C /tmp/premake-core -f Bootstrap.mak linux
+                cp /tmp/premake-core/bin/release/premake5 /usr/local/bin/premake5
+              fi
+              premake5 gmake2
+              make -j"$(nproc)" config=release CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS" LDFLAGS="$LDFLAGS"
+            elif [ -f CMakeLists.txt ]; then
+              mkdir -p build && cd build
+              cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_STANDARD=17
+              make -j"$(nproc)"
+            else
+              echo "[!] Kein unterstütztes Build-System gefunden."
+              exit 1
             fi
-            premake5 gmake2
-            make -j"$(nproc)" config=release CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS" LDFLAGS="$LDFLAGS"
-          elif [ -f CMakeLists.txt ]; then
-            mkdir -p build && cd build
-            cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_STANDARD=17
-            make -j"$(nproc)"
-          else
-            echo "[!] Kein unterstütztes Build-System gefunden."
-            exit 1
-          fi
 
-      - name: Verify Custom Strings in Compiled Binary
-        run: python3 .github/scripts/verify_es_binary.py
+            cd ..
+            python3 .github/scripts/verify_es_binary.py
 
       - name: Upload Built Binary & Companion Scripts
         uses: actions/upload-artifact@v4
