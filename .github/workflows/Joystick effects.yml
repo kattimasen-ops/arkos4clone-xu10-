@@ -14,14 +14,13 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set up QEMU & Run on ARM64 Container
-        uses: uraimo/run-on-arch-action@v2.5.0
+      - name: Set up QEMU & Run on ARM64 Container (Ubuntu 20.04)
+        uses: uraimo/run-on-arch-action@v3
         with:
-          arch: aarch64
-          distro: ubuntu20.04
+          arch: none
+          distro: none
+          base_image: '--platform=linux/aarch64 ubuntu:20.04'
           githubToken: ${{ github.token }}
-          install: |
-            apt-get update
           run: |
             set -e
             WORKSPACE_ROOT="${PWD}"
@@ -63,7 +62,7 @@ jobs:
             cp emulationstation "$PACKAGE_DIR/"
             [ -d "../resources" ] && cp -r "../resources" "$PACKAGE_DIR/"
 
-            # Copy any custom scripts from your root repo if they exist
+            # Copy any custom scripts from your root repo or .github/scripts if they exist
             cd "$WORKSPACE_ROOT"
             for script in es_patch.sh mcu_led_daemon.sh update_check.sh; do
               if [ -f "$script" ]; then
