@@ -106,9 +106,13 @@ jobs:
             PACKAGE_DIR="$WORKSPACE_ROOT/build_output/package"
             mkdir -p "$PACKAGE_DIR"
 
-            # Copy binary and UI resources
-            cp emulationstation "$PACKAGE_DIR/"
-            [ -d "../resources" ] && cp -r "../resources" "$PACKAGE_DIR/"
+            # Dynamically locate and copy the executable regardless of build output subfolder
+            find /tmp/es-source -type f -name "emulationstation" -perm /111 -exec cp {} "$PACKAGE_DIR/" \;
+            
+            # Copy UI resources
+            if [ -d "/tmp/es-source/resources" ]; then
+              cp -r "/tmp/es-source/resources" "$PACKAGE_DIR/"
+            fi
 
             # Bundle custom compiled shared libraries (.so*)
             cp -P /usr/lib/aarch64-linux-gnu/libgo2.so* "$PACKAGE_DIR/" 2>/dev/null || cp -P /usr/lib/libgo2.so* "$PACKAGE_DIR/" 2>/dev/null || true
