@@ -4,16 +4,21 @@ import sys
 import subprocess
 import glob
 
-WORKSPACE = os.environ.get("GITHUB_WORKSPACE", ".")
-SOURCE_ROOT = os.environ.get("ES_SOURCE_DIR", os.path.join(WORKSPACE, "es-source"))
+# Allow passing binary path as first CLI argument or via ENV
+if len(sys.argv) > 1:
+    binary_path = sys.argv[1]
+else:
+    binary_path = os.environ.get("ES_BIN_PATH")
+    if not binary_path:
+        # Fallback: search /tmp/es-source
+        source_root = "/tmp/es-source"
+        binary_path = None
+        for p in glob.glob(os.path.join(source_root, "**", "*"), recursive=True):
+            if os.path.basename(p) == "emulationstation" and os.path.isfile(p) and not os.path.islink(p):
+                binary_path = p
+                break
 
-binary_path = None
-for p in glob.glob(os.path.join(SOURCE_ROOT, "**", "*"), recursive=True):
-    if os.path.basename(p) == "emulationstation" and os.path.isfile(p) and not os.path.islink(p):
-        binary_path = p
-        break
-
-if not binary_path:
+if not binary_path or not os.path.isfile(binary_path):
     print("[ERROR] Could not locate compiled emulationstation binary!")
     sys.exit(1)
 
