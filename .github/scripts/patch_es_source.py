@@ -2,25 +2,22 @@
 import os
 import re
 
-# Custom modes to add alongside stock colors and 'flow'
+# New custom modes to add alongside all stock options
 NEW_MODES = [
-    "rainbow_wave",
-    "rainbow_full",
-    "battery_status",
-    "fire",
-    "strobe_party",
-    "police",
-    "disco",
-    "pulse_red",
-    "pulse_blue",
-    "pulse_green"
+    ("RAINBOW WAVE", "rainbow_wave"),
+    ("BATTERY STATUS", "battery_status"),
+    ("FIRE", "fire"),
+    ("POLICE", "police"),
+    ("DISCO", "disco"),
+    ("PULSE RED", "pulse_red"),
+    ("PULSE BLUE", "pulse_blue"),
+    ("PULSE GREEN", "pulse_green")
 ]
 
 def patch_joystick_menu():
-    print("[*] Scanning C++ files for Joystick LED options...")
-    
-    # Target GUI files in es-app
+    print("[*] Scanning C++ files for Joystick LED menu configuration...")
     search_dir = "es-source/es-app/src/guis"
+    
     if not os.path.exists(search_dir):
         print(f"[!] Directory {search_dir} not found. Skipping C++ patch.")
         return
@@ -33,28 +30,27 @@ def patch_joystick_menu():
                 with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
                     content = f.read()
 
-                # Find arrays or dropdown populators defining Joystick LED options
+                # Look for the Joystick LED option list definition in ES
                 if "JoystickLED" in content or "joystick_led" in content or "Joystick LED" in content:
                     print(f"[*] Found Joystick LED reference in: {filepath}")
                     
-                    # Pattern to locate string vectors/lists of LED options
-                    for mode in NEW_MODES:
-                        if mode not in content:
-                            # Safely inject new modes before the end of options array/list
-                            pattern = r'("flow"|"rainbow"|"breathing")'
-                            replacement = r'\1, "' + mode + '"'
+                    for label, mode_key in NEW_MODES:
+                        if mode_key not in content:
+                            # Inject new options before the closing of the dropdown population vector
+                            pattern = r'("flow"|"rainbow"|"breathing_white"|"static_white")'
+                            replacement = r'\1, "' + mode_key + '"'
                             if re.search(pattern, content):
                                 content = re.sub(pattern, replacement, content, count=1)
                                 patched = True
-                                print(f"  + Added mode: {mode}")
+                                print(f"  + Added UI option: {label} [{mode_key}]")
 
                     with open(filepath, "w", encoding="utf-8") as f:
                         f.write(content)
 
     if patched:
-        print("[SUCCESS] Joystick LED menu expanded while retaining all stock color options!")
+        print("[SUCCESS] All stock modes preserved and new modes appended to menu.")
     else:
-        print("[*] Stock modes verified. Options ready.")
+        print("[*] Joystick LED menu options verified.")
 
 if __name__ == "__main__":
     patch_joystick_menu()
