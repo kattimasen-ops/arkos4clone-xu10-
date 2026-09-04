@@ -20,12 +20,17 @@ jobs:
         run: |
           sudo dpkg --add-architecture arm64
 
-          # Restrict default Ubuntu repositories strictly to amd64
-          sudo sed -i -E 's/^deb http/deb [arch=amd64] http/g' /etc/apt/sources.list
-          sudo sed -i -E 's/^deb-src http/deb-src [arch=amd64] http/g' /etc/apt/sources.list
-          sudo sed -i -E 's/^deb \[arch=amd64,i386\]/deb [arch=amd64]/g' /etc/apt/sources.list
+          # Clear default runner sources to avoid arm64 lookup on standard x86_64 mirrors
+          sudo rm -f /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources
 
-          # Point all arm64 requests strictly to ports.ubuntu.com
+          # Direct amd64 requests exclusively to standard Ubuntu mirrors
+          cat << 'EOF' | sudo tee /etc/apt/sources.list
+          deb [arch=amd64] http://azure.archive.ubuntu.com/ubuntu/ jammy main restricted universe multiverse
+          deb [arch=amd64] http://azure.archive.ubuntu.com/ubuntu/ jammy-updates main restricted universe multiverse
+          deb [arch=amd64] http://security.ubuntu.com/ubuntu/ jammy-security main restricted universe multiverse
+          EOF
+
+          # Direct arm64 requests exclusively to ports.ubuntu.com
           cat << 'EOF' | sudo tee /etc/apt/sources.list.d/arm64-ports.list
           deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe multiverse
           deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-updates main restricted universe multiverse
