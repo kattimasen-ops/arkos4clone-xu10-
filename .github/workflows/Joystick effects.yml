@@ -76,25 +76,28 @@ jobs:
               ln -s $(ls libgo2.so.* | head -n 1) libgo2.so
             fi
 
-            echo "[+] Step 4: Cloning official EmulationStation-fcamod source and patching Renderer.cpp..."
+            echo "[+] Step 4: Cloning official EmulationStation-fcamod source and patching Renderer.h..."
             git clone --recursive --depth=1 https://github.com/christianhaitian/EmulationStation-fcamod.git /tmp/es-source
             cd /tmp/es-source
 
             python3 -c '
             import os
 
-            target_file = None
             for root, dirs, files in os.walk("."):
-                if "Renderer.cpp" in files and "renderers" in root:
-                    target_file = os.path.join(root, "Renderer.cpp")
-                    break
-
-            if target_file:
-                with open(target_file, "a") as f:
-                    f.write("\n\n#include <SDL2/SDL.h>\nnamespace Renderer {\n    SDL_Window* getSDLWindow() {\n        return SDL_GL_GetCurrentWindow();\n    }\n}\n")
-                print(f"[+] Appended getSDLWindow() implementation to {target_file}")
-            else:
-                print("[-] Could not find Renderer.cpp")
+                for file in files:
+                    if file == "Renderer.h":
+                        path = os.path.join(root, file)
+                        with open(path, "r") as f:
+                            content = f.read()
+                        
+                        if "SDL_GL_GetCurrentWindow" not in content:
+                            new_content = content.replace(
+                                "SDL_Window* getSDLWindow();",
+                                "#include <SDL2/SDL.h>\ninline SDL_Window* getSDLWindow() { return SDL_GL_GetCurrentWindow(); }"
+                            )
+                            with open(path, "w") as f:
+                                f.write(new_content)
+                            print(f"[+] Successfully converted getSDLWindow() to inline definition in {path}")
             '
 
             echo "[+] Step 5: Configuring and compiling EmulationStation against GLIBC 2.31..."
@@ -102,11 +105,11 @@ jobs:
             cmake -DCMAKE_BUILD_TYPE=Release ..
             make -j$(nproc)
 
-            echo "[+] Step 6: Assembling flattened release package (Binary + Shared Libs + ALL Shell Scripts)..."
+            echo "[+] Step 6: Assembling flattened release package..."
             PACKAGE_DIR="$WORKSPACE_ROOT/build_output/package"
             mkdir -p "$PACKAGE_DIR"
 
-            # Dynamically locate and copy the executable regardless of build output subfolder
+            # Dynamically locate and copy the executable
             find /tmp/es-source -type f -name "emulationstation" -perm /111 -exec cp {} "$PACKAGE_DIR/" \;
             
             # Copy UI resources
