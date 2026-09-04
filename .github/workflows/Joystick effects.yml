@@ -35,7 +35,7 @@ jobs:
               libdrm-dev libgbm-dev libinput-dev libevdev-dev libopenal-dev libpulse-dev \
               libboost-system-dev libboost-filesystem-dev libboost-date-time-dev \
               libboost-locale-dev libboost-thread-dev rapidjson-dev \
-              libvlc-dev libvlccore-dev vlc-bin zip ca-certificates libwacom-dev
+              libvlc-dev libvlccore-dev vlc-bin zip ca-certificates libwacom-dev python3
 
             echo "[+] Step 2: Building and installing official Christian Haitian linux-rga..."
             git clone https://github.com/christianhaitian/linux-rga.git /tmp/linux-rga
@@ -76,22 +76,22 @@ jobs:
               ln -s $(ls libgo2.so.* | head -n 1) libgo2.so
             fi
 
-            echo "[+] Step 4: Cloning official EmulationStation-fcamod source and patching static getSDLWindow symbol..."
+            echo "[+] Step 4: Cloning official EmulationStation-fcamod source and patching via Python..."
             git clone --recursive --depth=1 https://github.com/christianhaitian/EmulationStation-fcamod.git /tmp/es-source
             cd /tmp/es-source
 
-            # Patch Renderer.h to declare static getSDLWindow if missing
-            if ! grep -q "getSDLWindow" es-core/src/Renderer.h; then
-              sed -i '/class Renderer/a \
-public:\
-    static SDL_Window* getSDLWindow();' es-core/src/Renderer.h || true
-            fi
+            # Use Python to cleanly inject the static getSDLWindow method declaration and definition
+            python3 -c '
+            with open("es-core/src/Renderer.h", "r") as f:
+                content = f.read()
+            if "getSDLWindow" not in content:
+                content = content.replace("class Renderer", "class Renderer {\npublic:\n    static SDL_Window* getSDLWindow();\nprivate:")
+                with open("es-core/src/Renderer.h", "w") as f:
+                    f.write(content)
 
-            # Patch Renderer.cpp to define static getSDLWindow matching static invocation
-            if ! grep -q "SDL_Window* Renderer::getSDLWindow" es-core/src/Renderer.cpp; then
-              echo "" >> es-core/src/Renderer.cpp
-              echo "SDL_Window* Renderer::getSDLWindow() { return window; }" >> es-core/src/Renderer.cpp
-            fi
+            with open("es-core/src/Renderer.cpp", "a") as f:
+                f.write("\nSDL_Window* Renderer::getSDLWindow() { return window; }\n")
+            '
 
             echo "[+] Step 5: Configuring and compiling EmulationStation against GLIBC 2.31..."
             mkdir -p build && cd build
