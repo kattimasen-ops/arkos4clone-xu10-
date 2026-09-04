@@ -2,6 +2,8 @@ name: fnkt ES with Full OTA & RGB LED UI Integration
 
 on:
   workflow_dispatch:
+  push:
+    branches: [ main, master ]
 
 permissions:
   contents: write
@@ -17,13 +19,19 @@ jobs:
       - name: Set up ARM64 Cross-Compilation Architecture
         run: |
           sudo dpkg --add-architecture arm64
-          sudo sed -i 's/deb http/deb [arch=amd64,i386] http/g' /etc/apt/sources.list
-          sudo sed -i 's/deb \[arch=amd64,i386\] http:\/\/security/deb [arch=amd64,i386] http:\/\/security/g' /etc/apt/sources.list
-          
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-security main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
-          
+
+          # Restrict default Ubuntu repositories strictly to amd64
+          sudo sed -i -E 's/^deb http/deb [arch=amd64] http/g' /etc/apt/sources.list
+          sudo sed -i -E 's/^deb-src http/deb-src [arch=amd64] http/g' /etc/apt/sources.list
+          sudo sed -i -E 's/^deb \[arch=amd64,i386\]/deb [arch=amd64]/g' /etc/apt/sources.list
+
+          # Point all arm64 requests strictly to ports.ubuntu.com
+          cat << 'EOF' | sudo tee /etc/apt/sources.list.d/arm64-ports.list
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe multiverse
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-updates main restricted universe multiverse
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-security main restricted universe multiverse
+          EOF
+
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
