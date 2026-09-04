@@ -76,12 +76,19 @@ jobs:
               ln -s $(ls libgo2.so.* | head -n 1) libgo2.so
             fi
 
-            echo "[+] Step 4: Cloning official EmulationStation-fcamod source and patching missing symbols..."
+            echo "[+] Step 4: Cloning official EmulationStation-fcamod source and patching static getSDLWindow symbol..."
             git clone --recursive --depth=1 https://github.com/christianhaitian/EmulationStation-fcamod.git /tmp/es-source
             cd /tmp/es-source
 
-            # Patch Renderer.cpp to provide getSDLWindow() if missing
-            if ! grep -q "getSDLWindow" es-core/src/Renderer.cpp; then
+            # Patch Renderer.h to declare static getSDLWindow if missing
+            if ! grep -q "getSDLWindow" es-core/src/Renderer.h; then
+              sed -i '/class Renderer/a \
+public:\
+    static SDL_Window* getSDLWindow();' es-core/src/Renderer.h || true
+            fi
+
+            # Patch Renderer.cpp to define static getSDLWindow matching static invocation
+            if ! grep -q "SDL_Window* Renderer::getSDLWindow" es-core/src/Renderer.cpp; then
               echo "" >> es-core/src/Renderer.cpp
               echo "SDL_Window* Renderer::getSDLWindow() { return window; }" >> es-core/src/Renderer.cpp
             fi
@@ -91,7 +98,7 @@ jobs:
             cmake -DCMAKE_BUILD_TYPE=Release ..
             make -j$(nproc)
 
-            echo "[+] Step 6: Assembling flattened release package with all shared libraries..."
+            echo "[+] Step 6: Assembling flattened release package (Binary + Shared Libs + ALL Shell Scripts)..."
             PACKAGE_DIR="$WORKSPACE_ROOT/build_output/package"
             mkdir -p "$PACKAGE_DIR"
 
@@ -99,19 +106,19 @@ jobs:
             cp emulationstation "$PACKAGE_DIR/"
             [ -d "../resources" ] && cp -r "../resources" "$PACKAGE_DIR/"
 
-            # Bundle custom compiled shared libraries (.so*) so they deploy cleanly on device
+            # Bundle custom compiled shared libraries (.so*)
             cp -P /usr/lib/aarch64-linux-gnu/libgo2.so* "$PACKAGE_DIR/" 2>/dev/null || cp -P /usr/lib/libgo2.so* "$PACKAGE_DIR/" 2>/dev/null || true
             cp -P /usr/lib/aarch64-linux-gnu/librga.so* "$PACKAGE_DIR/" 2>/dev/null || cp -P /usr/lib/librga.so* "$PACKAGE_DIR/" 2>/dev/null || true
 
-            # Smart Script Collector: Grabs helper scripts from root or .github/scripts/
+            # Smart Multi-Script Collector: Grabs EVERY .sh script from your repo root and .github/scripts/
             cd "$WORKSPACE_ROOT"
-            for script in es_patch.sh mcu_led_daemon.sh update_check.sh; do
-              if [ -f "$script" ]; then
-                cp "$script" "$PACKAGE_DIR/"
-              elif [ -f ".github/scripts/$script" ]; then
-                cp ".github/scripts/$script" "$PACKAGE_DIR/"
-              fi
-            done
+            find . -maxdepth 1 -name "*.sh" -exec cp {} "$PACKAGE_DIR/" \; 2>/dev/null || true
+            if [ -d ".github/scripts" ]; then
+              find .github/scripts -maxdepth 1 -name "*.sh" -exec cp {} "$PACKAGE_DIR/" \; 2>/dev/null || true
+            fi
+            
+            # Ensure all scripts are executable
+            chmod +x "$PACKAGE_DIR"/*.sh 2>/dev/null || true
 
             echo "[+] Step 7: Creating final release archive..."
             cd "$PACKAGE_DIR"
