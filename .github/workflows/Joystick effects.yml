@@ -80,17 +80,33 @@ jobs:
             git clone --recursive --depth=1 https://github.com/christianhaitian/EmulationStation-fcamod.git /tmp/es-source
             cd /tmp/es-source
 
-            # Use Python to cleanly inject the static getSDLWindow method declaration and definition
+            # Dynamically locate Renderer files and inject missing getSDLWindow symbol cleanly
             python3 -c '
-            with open("es-core/src/Renderer.h", "r") as f:
-                content = f.read()
-            if "getSDLWindow" not in content:
-                content = content.replace("class Renderer", "class Renderer {\npublic:\n    static SDL_Window* getSDLWindow();\nprivate:")
-                with open("es-core/src/Renderer.h", "w") as f:
-                    f.write(content)
+            import os, re
+            ren_h, ren_cpp = None, None
+            for root, dirs, files in os.walk("."):
+                if "Renderer.h" in files and not ren_h:
+                    ren_h = os.path.join(root, "Renderer.h")
+                if "Renderer.cpp" in files and not ren_cpp:
+                    ren_cpp = os.path.join(root, "Renderer.cpp")
 
-            with open("es-core/src/Renderer.cpp", "a") as f:
-                f.write("\nSDL_Window* Renderer::getSDLWindow() { return window; }\n")
+            if ren_h:
+                with open(ren_h, "r") as f:
+                    content = f.read()
+                if "getSDLWindow" not in content:
+                    if "namespace Renderer" in content:
+                        content = re.sub(r"(namespace\s+Renderer\s*\{)", r"\1\nSDL_Window* getSDLWindow();\n", content, count=1)
+                    elif "class Renderer" in content:
+                        content = re.sub(r"(class\s+Renderer\s*\{)", r"\1\npublic:\n    static SDL_Window* getSDLWindow();\n", content, count=1)
+                    with open(ren_h, "w") as f:
+                        f.write(content)
+
+            if ren_cpp:
+                with open(ren_cpp, "r") as f:
+                    cpp_content = f.read()
+                if "getSDLWindow" not in cpp_content:
+                    with open(ren_cpp, "a") as f:
+                        f.write("\nSDL_Window* Renderer::getSDLWindow() { return window; }\n")
             '
 
             echo "[+] Step 5: Configuring and compiling EmulationStation against GLIBC 2.31..."
@@ -110,7 +126,7 @@ jobs:
             cp -P /usr/lib/aarch64-linux-gnu/libgo2.so* "$PACKAGE_DIR/" 2>/dev/null || cp -P /usr/lib/libgo2.so* "$PACKAGE_DIR/" 2>/dev/null || true
             cp -P /usr/lib/aarch64-linux-gnu/librga.so* "$PACKAGE_DIR/" 2>/dev/null || cp -P /usr/lib/librga.so* "$PACKAGE_DIR/" 2>/dev/null || true
 
-            # Smart Multi-Script Collector: Grabs EVERY .sh script from your repo root and .github/scripts/
+            # Smart Multi-Script Collector: Grabs EVERY .sh script from repository
             cd "$WORKSPACE_ROOT"
             find . -maxdepth 1 -name "*.sh" -exec cp {} "$PACKAGE_DIR/" \; 2>/dev/null || true
             if [ -d ".github/scripts" ]; then
