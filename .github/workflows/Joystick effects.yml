@@ -22,11 +22,13 @@ jobs:
           githubToken: ${{ github.token }}
           install: |
             export DEBIAN_FRONTEND=noninteractive
-            apt-get update && apt-get install -y \
+            apt-get update && apt-get install -y --no-install-recommends \
               build-essential cmake pkg-config git \
               libsdl2-dev libsdl2-mixer-dev libfreeimage-dev libfreetype6-dev \
               libcurl4-openssl-dev libasound2-dev libgl1-mesa-dev \
-              libeigen3-dev libboost-all-dev rapidjson-dev \
+              libeigen3-dev rapidjson-dev \
+              libboost-system-dev libboost-filesystem-dev libboost-date-time-dev \
+              libboost-locale-dev libboost-serialization-dev \
               libvlc-dev libvlccore-dev vlc-bin python3 fonts-droid-fallback binutils \
               ca-certificates
           run: |
