@@ -1,4 +1,4 @@
-name: Build EmulationStation for M9 Pro (ArkOS / ARM64)
+name: Build EmulationStation for M9 Pro (ArkOS / ARM64 / RK3326)
 
 on:
   push:
@@ -14,7 +14,7 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set up QEMU & Run on ARM64 Container (Ubuntu 20.04)
+      - name: Set up QEMU & Run on ARM64 Container (Ubuntu 20.04 / GLIBC 2.31)
         uses: uraimo/run-on-arch-action@v3
         with:
           arch: none
@@ -35,37 +35,42 @@ jobs:
               libdrm-dev libgbm-dev libinput-dev libevdev-dev libopenal-dev libpulse-dev \
               libboost-system-dev libboost-filesystem-dev libboost-date-time-dev \
               libboost-locale-dev libboost-thread-dev rapidjson-dev \
-              libvlc-dev libvlccore-dev vlc-bin zip ca-certificates
+              libvlc-dev libvlccore-dev vlc-bin zip ca-certificates libwacom-dev
 
-            echo "[+] Step 2: Automatically cloning and building libgo2 (Hardware Abstraction)..."
+            echo "[+] Step 2: Setting up Rockchip RGA headers for RK3326 display acceleration..."
+            git clone --depth=1 https://github.com/amarula/rockchip-linux-rga.git /tmp/rockchip-rga
+            mkdir -p /usr/include/rga
+            cp -f /tmp/rockchip-rga/*.h /usr/include/rga/
+
+            echo "[+] Step 3: Automatically cloning and building libgo2 (Hardware Abstraction)..."
             git clone --depth=1 https://github.com/OtherCrashOverride/libgo2.git /tmp/libgo2
             cd /tmp/libgo2
             premake4 gmake
             make -j$(nproc)
 
-            # Install go2 headers and shared libraries into system paths
+            # Install go2 headers and shared libraries into strict system paths
             mkdir -p /usr/include/go2
             cp src/*.h /usr/include/go2/
             cp libgo2.so* /usr/lib/aarch64-linux-gnu/ 2>/dev/null || cp libgo2.so* /usr/lib/
 
-            echo "[+] Step 3: Cloning official EmulationStation-fcamod source..."
+            echo "[+] Step 4: Cloning official EmulationStation-fcamod source..."
             git clone --recursive --depth=1 https://github.com/christianhaitian/EmulationStation-fcamod.git /tmp/es-source
             cd /tmp/es-source
 
-            echo "[+] Step 4: Configuring and compiling EmulationStation against GLIBC 2.31..."
+            echo "[+] Step 5: Configuring and compiling EmulationStation against GLIBC 2.31..."
             mkdir -p build && cd build
             cmake -DCMAKE_BUILD_TYPE=Release ..
             make -j$(nproc)
 
-            echo "[+] Step 5: Assembling flattened release package..."
+            echo "[+] Step 6: Assembling flattened release package..."
             PACKAGE_DIR="$WORKSPACE_ROOT/build_output/package"
             mkdir -p "$PACKAGE_DIR"
 
-            # Copy binary and resources
+            # Copy binary and UI resources
             cp emulationstation "$PACKAGE_DIR/"
             [ -d "../resources" ] && cp -r "../resources" "$PACKAGE_DIR/"
 
-            # Copy any custom scripts from root repository or .github/scripts/
+            # Smart Script Collector: Grabs helper scripts from root or .github/scripts/
             cd "$WORKSPACE_ROOT"
             for script in es_patch.sh mcu_led_daemon.sh update_check.sh; do
               if [ -f "$script" ]; then
@@ -75,7 +80,7 @@ jobs:
               fi
             done
 
-            echo "[+] Step 6: Creating final release archive..."
+            echo "[+] Step 7: Creating final release archive..."
             cd "$PACKAGE_DIR"
             zip -r "$WORKSPACE_ROOT/build_output/emulationstation-fcamod-m9pro.zip" .
             echo "[✓] Build finished successfully!"
