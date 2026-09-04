@@ -18,10 +18,11 @@ jobs:
         uses: uraimo/run-on-arch-action@v2
         with:
           arch: aarch64
-          distro: ubuntu20.04
+          distro: ubuntu22.04
           githubToken: ${{ github.token }}
           install: |
             export DEBIAN_FRONTEND=noninteractive
+            export PYTHONDONTWRITEBYTECODE=1
             apt-get update && apt-get install -y --no-install-recommends \
               build-essential cmake pkg-config git \
               libsdl2-dev libsdl2-mixer-dev libfreeimage-dev libfreetype6-dev \
