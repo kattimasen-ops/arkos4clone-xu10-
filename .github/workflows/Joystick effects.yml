@@ -80,33 +80,58 @@ jobs:
             git clone --recursive --depth=1 https://github.com/christianhaitian/EmulationStation-fcamod.git /tmp/es-source
             cd /tmp/es-source
 
-            # Dynamically locate Renderer files and inject missing getSDLWindow symbol cleanly
             python3 -c '
             import os, re
-            ren_h, ren_cpp = None, None
+
+            # 1. Ensure getSDLWindow is declared in Renderer.h
+            ren_h = None
             for root, dirs, files in os.walk("."):
-                if "Renderer.h" in files and not ren_h:
+                if "Renderer.h" in files:
                     ren_h = os.path.join(root, "Renderer.h")
-                if "Renderer.cpp" in files and not ren_cpp:
-                    ren_cpp = os.path.join(root, "Renderer.cpp")
+                    break
 
             if ren_h:
                 with open(ren_h, "r") as f:
-                    content = f.read()
-                if "getSDLWindow" not in content:
-                    if "namespace Renderer" in content:
-                        content = re.sub(r"(namespace\s+Renderer\s*\{)", r"\1\nSDL_Window* getSDLWindow();\n", content, count=1)
-                    elif "class Renderer" in content:
-                        content = re.sub(r"(class\s+Renderer\s*\{)", r"\1\npublic:\n    static SDL_Window* getSDLWindow();\n", content, count=1)
+                    h_content = f.read()
+                if "getSDLWindow" not in h_content:
+                    if "namespace Renderer" in h_content:
+                        h_content = re.sub(r"(namespace\s+Renderer\s*\{)", r"\1\nSDL_Window* getSDLWindow();\n", h_content, count=1)
+                    elif "class Renderer" in h_content:
+                        h_content = re.sub(r"(class\s+Renderer\s*\{)", r"\1\npublic:\n    static SDL_Window* getSDLWindow();\n", h_content, count=1)
                     with open(ren_h, "w") as f:
-                        f.write(content)
+                        f.write(h_content)
 
-            if ren_cpp:
-                with open(ren_cpp, "r") as f:
-                    cpp_content = f.read()
-                if "getSDLWindow" not in cpp_content:
-                    with open(ren_cpp, "a") as f:
-                        f.write("\nSDL_Window* Renderer::getSDLWindow() { return window; }\n")
+            # 2. Inject getSDLWindow definition into ALL active Renderer implementation files
+            for root, dirs, files in os.walk("."):
+                for file in files:
+                    if file.startswith("Renderer") and file.endswith(".cpp"):
+                        cpp_path = os.path.join(root, file)
+                        with open(cpp_path, "r") as f:
+                            cpp_content = f.read()
+
+                        if "getSDLWindow" in cpp_content and "return" in cpp_content.split("getSDLWindow")[1].split("}")[0]:
+                            continue
+
+                        win_var = None
+                        m1 = re.search(r"SDL_Window\s*\*\s*([a-zA-Z0-9_]+)", cpp_content)
+                        if m1:
+                            win_var = m1.group(1)
+                        else:
+                            m2 = re.search(r"([a-zA-Z0-9_]+)\s*=\s*SDL_CreateWindow", cpp_content)
+                            if m2:
+                                win_var = m2.group(1)
+
+                        if win_var:
+                            last_brace = cpp_content.rfind("}")
+                            if last_brace != -1 and "namespace Renderer" in cpp_content:
+                                patch = f"\nSDL_Window* getSDLWindow() {{ return {win_var}; }}\n"
+                                new_cpp = cpp_content[:last_brace] + patch + cpp_content[last_brace:]
+                                with open(cpp_path, "w") as f:
+                                    f.write(new_cpp)
+                            else:
+                                patch = f"\nSDL_Window* Renderer::getSDLWindow() {{ return {win_var}; }}\n"
+                                with open(cpp_path, "a") as f:
+                                    f.write(patch)
             '
 
             echo "[+] Step 5: Configuring and compiling EmulationStation against GLIBC 2.31..."
