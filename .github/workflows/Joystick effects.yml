@@ -76,9 +76,15 @@ jobs:
               ln -s $(ls libgo2.so.* | head -n 1) libgo2.so
             fi
 
-            echo "[+] Step 4: Cloning official EmulationStation-fcamod source..."
+            echo "[+] Step 4: Cloning official EmulationStation-fcamod source and patching missing symbols..."
             git clone --recursive --depth=1 https://github.com/christianhaitian/EmulationStation-fcamod.git /tmp/es-source
             cd /tmp/es-source
+
+            # Patch Renderer.cpp to provide getSDLWindow() if missing
+            if ! grep -q "getSDLWindow" es-core/src/Renderer.cpp; then
+              echo "" >> es-core/src/Renderer.cpp
+              echo "SDL_Window* Renderer::getSDLWindow() { return window; }" >> es-core/src/Renderer.cpp
+            fi
 
             echo "[+] Step 5: Configuring and compiling EmulationStation against GLIBC 2.31..."
             mkdir -p build && cd build
