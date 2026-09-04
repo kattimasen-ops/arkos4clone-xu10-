@@ -22,7 +22,7 @@ jobs:
           base_image: '--platform=linux/aarch64 ubuntu:20.04'
           githubToken: ${{ github.token }}
           run: |
-            set -e
+            set -euo pipefail
             WORKSPACE_ROOT="${PWD}"
 
             echo "[+] Step 1: Installing exhaustive ArkOS/RK3326 build dependencies..."
@@ -45,7 +45,7 @@ jobs:
             meson ..
             ninja
             
-            # Deploy shared binaries and headers to standard paths expected by libgo2
+            # Deploy shared binaries and headers to standard system paths
             cp -r librga.so* /usr/lib/aarch64-linux-gnu/ 2>/dev/null || true
             cp -r librga.so* /usr/lib/ 2>/dev/null || true
             cd ..
@@ -53,7 +53,7 @@ jobs:
             cp -f drmrga.h rga.h RgaApi.h RockchipRgaMacro.h /usr/local/include/rga/ 2>/dev/null || true
             cp -f drmrga.h rga.h RgaApi.h RockchipRgaMacro.h /usr/include/rga/ 2>/dev/null || true
 
-            # Ensure linker symlink exists for -lrga
+            # Ensure linker symlinks exist for -lrga
             cd /usr/lib/aarch64-linux-gnu/ 2>/dev/null || cd /usr/lib/
             if ls librga.so.* 1> /dev/null 2>&1 && [ ! -e librga.so ]; then
               ln -s $(ls librga.so.* | head -n 1) librga.so
@@ -76,65 +76,100 @@ jobs:
               ln -s $(ls libgo2.so.* | head -n 1) libgo2.so
             fi
 
-            echo "[+] Step 4: Cloning official EmulationStation-fcamod source and patching Renderer.h..."
+            echo "[+] Step 4: Cloning source and executing bulletproof patcher..."
             git clone --recursive --depth=1 https://github.com/christianhaitian/EmulationStation-fcamod.git /tmp/es-source
             cd /tmp/es-source
 
             python3 -c '
-            import os
+            import os, sys, re
 
+            patched = False
             for root, dirs, files in os.walk("."):
                 for file in files:
                     if file == "Renderer.h":
                         path = os.path.join(root, file)
-                        with open(path, "r") as f:
+                        with open(path, "r", encoding="utf-8") as f:
                             content = f.read()
                         
-                        if "SDL_GL_GetCurrentWindow" not in content:
-                            new_content = content.replace(
-                                "SDL_Window* getSDLWindow();",
-                                "#include <SDL2/SDL.h>\ninline SDL_Window* getSDLWindow() { return SDL_GL_GetCurrentWindow(); }"
-                            )
-                            with open(path, "w") as f:
+                        # Add SDL2 header if missing
+                        if "<SDL2/SDL.h>" not in content:
+                            content = "#include <SDL2/SDL.h>\n" + content
+
+                        # Replace declaration with inline implementation using robust regex
+                        pattern = r"SDL_Window\s*\*\s*getSDLWindow\s*\(\s*\)\s*;"
+                        replacement = "inline SDL_Window* getSDLWindow() { return SDL_GL_GetCurrentWindow(); }"
+                        
+                        new_content, count = re.subn(pattern, replacement, content)
+                        
+                        if count > 0:
+                            with open(path, "w", encoding="utf-8") as f:
                                 f.write(new_content)
-                            print(f"[+] Successfully converted getSDLWindow() to inline definition in {path}")
+                            print(f"[✓] Regex replacement successful in {path}")
+                            patched = True
+                        elif "SDL_GL_GetCurrentWindow" in content:
+                            print(f"[=] Already patched in {path}")
+                            patched = True
+                        else:
+                            # Fallback: force injection inside namespace Renderer
+                            injection = "\nnamespace Renderer {\n    inline SDL_Window* getSDLWindow() { return SDL_GL_GetCurrentWindow(); }\n}\n"
+                            if "#endif" in content:
+                                idx = content.rfind("#endif")
+                                new_content = content[:idx] + injection + content[idx:]
+                            else:
+                                new_content = content + injection
+                            
+                            with open(path, "w", encoding="utf-8") as f:
+                                f.write(new_content)
+                            print(f"[✓] Fallback injection successful in {path}")
+                            patched = True
+
+            if not patched:
+                print("[!] FATAL ERROR: Renderer.h was not found or could not be patched!")
+                sys.exit(1)
             '
 
-            echo "[+] Step 5: Configuring and compiling EmulationStation against GLIBC 2.31..."
+            # Mandatory Verification Gate (Fail immediately if symbol isn't present)
+            echo "[+] Verifying patch in source tree..."
+            if ! grep -rn "SDL_GL_GetCurrentWindow" /tmp/es-source/; then
+                echo "[!] FATAL VERIFICATION ERROR: Symbol injection missing from source tree!" >&2
+                exit 1
+            fi
+            echo "[✓] Source patch verified 100%!"
+
+            echo "[+] Step 5: Configuring and compiling EmulationStation..."
             mkdir -p build && cd build
             cmake -DCMAKE_BUILD_TYPE=Release ..
-            make -j$(nproc)
+            make -j2
 
-            echo "[+] Step 6: Assembling flattened release package..."
+            echo "[+] Step 6: Assembling release package..."
             PACKAGE_DIR="$WORKSPACE_ROOT/build_output/package"
             mkdir -p "$PACKAGE_DIR"
 
-            # Dynamically locate and copy the executable
+            # Copy executable binary
             find /tmp/es-source -type f -name "emulationstation" -perm /111 -exec cp {} "$PACKAGE_DIR/" \;
             
-            # Copy UI resources
+            # Copy UI resources directory
             if [ -d "/tmp/es-source/resources" ]; then
               cp -r "/tmp/es-source/resources" "$PACKAGE_DIR/"
             fi
 
-            # Bundle custom compiled shared libraries (.so*)
+            # Bundle compiled shared libraries
             cp -P /usr/lib/aarch64-linux-gnu/libgo2.so* "$PACKAGE_DIR/" 2>/dev/null || cp -P /usr/lib/libgo2.so* "$PACKAGE_DIR/" 2>/dev/null || true
             cp -P /usr/lib/aarch64-linux-gnu/librga.so* "$PACKAGE_DIR/" 2>/dev/null || cp -P /usr/lib/librga.so* "$PACKAGE_DIR/" 2>/dev/null || true
 
-            # Smart Multi-Script Collector: Grabs EVERY .sh script from repository
+            # Collect scripts (.sh)
             cd "$WORKSPACE_ROOT"
             find . -maxdepth 1 -name "*.sh" -exec cp {} "$PACKAGE_DIR/" \; 2>/dev/null || true
             if [ -d ".github/scripts" ]; then
               find .github/scripts -maxdepth 1 -name "*.sh" -exec cp {} "$PACKAGE_DIR/" \; 2>/dev/null || true
             fi
             
-            # Ensure all scripts are executable
             chmod +x "$PACKAGE_DIR"/*.sh 2>/dev/null || true
 
-            echo "[+] Step 7: Creating final release archive..."
+            echo "[+] Step 7: Archiving build artifacts..."
             cd "$PACKAGE_DIR"
             zip -r "$WORKSPACE_ROOT/build_output/emulationstation-fcamod-m9pro.zip" .
-            echo "[✓] Build finished successfully!"
+            echo "[✓] Build completed successfully!"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
