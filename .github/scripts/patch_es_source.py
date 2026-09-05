@@ -31,6 +31,8 @@ ANCHOR_PATTERN = re.compile(r'"(flow|rainbow|breathing_white|static_white)"')
 # Prints a real function-name backtrace (the binary is confirmed
 # not-stripped, so symbol names resolve) to /home/ark/es_crash.log before
 # the process dies, instead of a bare boot-loop with no diagnostic info.
+# Includes fallback routing to /tmp/es_crash.log and /dev/tty1 if the
+# filesystem drops to read-only during an SD card fault.
 #
 # Installed via a static-init object rather than a call inserted inside
 # main()'s body: a global object's constructor runs before main() starts
@@ -54,26 +56,34 @@ CRASH_HANDLER_CODE = r"""
 
 namespace {
     void es_crash_signal_handler(int sig) {
-        const char* path = "/home/ark/es_crash.log";
-        int fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0644);
-        if (fd >= 0) {
-            const char* header = "\n[CRASH] EmulationStation caught a fatal signal\n";
-            write(fd, header, strlen(header));
-
-            const char* sig_name =
-                (sig == SIGSEGV) ? "SIGSEGV (segmentation fault)\n" :
-                (sig == SIGABRT) ? "SIGABRT (abort)\n" :
-                (sig == SIGFPE)  ? "SIGFPE (floating point exception)\n" :
-                (sig == SIGILL)  ? "SIGILL (illegal instruction)\n" :
-                                    "unknown signal\n";
-            write(fd, sig_name, strlen(sig_name));
-
-            void* bt[64];
-            int n = backtrace(bt, 64);
-            backtrace_symbols_fd(bt, n, fd);
-
-            close(fd);
+        int fd = open("/home/ark/es_crash.log", O_WRONLY | O_CREAT | O_APPEND, 0644);
+        if (fd < 0) {
+            fd = open("/tmp/es_crash.log", O_WRONLY | O_CREAT | O_APPEND, 0644);
         }
+        int tty_fd = open("/dev/tty1", O_WRONLY | O_APPEND);
+
+        const char* header = "\n[CRASH] EmulationStation caught a fatal signal\n";
+        if (fd >= 0) write(fd, header, strlen(header));
+        if (tty_fd >= 0) write(tty_fd, header, strlen(header));
+
+        const char* sig_name =
+            (sig == SIGSEGV) ? "SIGSEGV (segmentation fault)\n" :
+            (sig == SIGABRT) ? "SIGABRT (abort)\n" :
+            (sig == SIGFPE)  ? "SIGFPE (floating point exception)\n" :
+            (sig == SIGILL)  ? "SIGILL (illegal instruction)\n" :
+                                "unknown signal\n";
+        
+        if (fd >= 0) write(fd, sig_name, strlen(sig_name));
+        if (tty_fd >= 0) write(tty_fd, sig_name, strlen(sig_name));
+
+        void* bt[64];
+        int n = backtrace(bt, 64);
+        if (fd >= 0) backtrace_symbols_fd(bt, n, fd);
+        if (tty_fd >= 0) backtrace_symbols_fd(bt, n, tty_fd);
+
+        if (fd >= 0) close(fd);
+        if (tty_fd >= 0) close(tty_fd);
+
         // Re-raise with the default handler so the OS still records/handles
         // the crash normally (correct exit status, core dump if enabled).
         signal(sig, SIG_DFL);
@@ -158,7 +168,7 @@ def patch_crash_handler():
     with open(main_cpp, "w", encoding="utf-8") as f:
         f.write(content)
     print(f"[+] Injected SIGSEGV/SIGABRT/SIGFPE/SIGILL backtrace handler into: {main_cpp}")
-    print("    Crash backtraces will be appended to /home/ark/es_crash.log")
+    print("    Crash backtraces will be appended to /home/ark/es_crash.log, /tmp/, or /dev/tty1")
 
 
 def get_source_root():
