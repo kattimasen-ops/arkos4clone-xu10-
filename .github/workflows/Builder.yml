@@ -14,20 +14,6 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # BUGFIX: "distro: ubuntu" + "base_image: ubuntu:20.04" is not a
-      # documented/valid combination for this action. For a custom base
-      # image, both arch and distro must be "none" and the platform is
-      # given as part of base_image itself. See the action's README.
-      # NOTE: pulling the arm64 variant of ubuntu:20.04 from Docker Hub
-      # has been reported failing for other users recently (deprecated
-      # manifest for that architecture/tag). If this step starts failing
-      # with an image-resolution error rather than a compile error, that's
-      # why - the documented workaround is this exact
-      # "--platform=linux/aarch64 ubuntu:20.04" form, but if Ubuntu 20.04
-      # arm64 truly stops resolving, the next fallback to try is
-      # ubuntu:22.04 (GLIBC 2.35) - note that does raise the minimum GLIBC
-      # your target device needs, so test that binary carefully before
-      # relying on it.
       - name: Set up QEMU & Run on ARM64 Container (Ubuntu 20.04 / GLIBC 2.31)
         uses: uraimo/run-on-arch-action@v3
         with:
@@ -100,7 +86,8 @@ jobs:
             make -j$(nproc)
 
             echo "[+] Step 6: Verifying compiled binary architecture..."
-            ES_BIN_PATH="/tmp/es-source/build/emulationstation"
+            # 🔧 FIXED: The binary is created at the source root, not inside build/
+            ES_BIN_PATH="/tmp/es-source/emulationstation"
             python3 "$WORKSPACE_ROOT/.github/scripts/verify_es_binary.py" "$ES_BIN_PATH"
 
             echo "[+] Step 7: Assembling release package with shared libraries..."
@@ -134,4 +121,3 @@ jobs:
           name: emulationstation-fcamod-m9pro
           path: build_output/emulationstation-fcamod-m9pro.zip
           retention-days: 7
-          
