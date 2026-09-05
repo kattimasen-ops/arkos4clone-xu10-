@@ -111,6 +111,7 @@ jobs:
             # doesn't depend on any file-path guessing succeeding.
             # --------------------------------------------------------------
             echo "[+] Step 5: Installing Rockchip Mali (Mali-G31) GPU userspace driver..."
+            # FIXED: Download the correct 'bifrost-g31' packages for the RK3326/Mali-G31 GPU
             MALI_DRIVER_BASE_URL="https://github.com/southoz/EmulationStation-fcamod-ogs-retrooz/raw/master"
             curl -L -o /tmp/libmali-rk-bifrost-g31-rxp0-wayland-gbm_1.7-2+deb10_arm64.deb \
               "${MALI_DRIVER_BASE_URL}/libmali-rk-bifrost-g31-rxp0-wayland-gbm_1.7-2+deb10_arm64.deb"
