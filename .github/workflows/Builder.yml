@@ -14,6 +14,20 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      # BUGFIX: "distro: ubuntu" + "base_image: ubuntu:20.04" is not a
+      # documented/valid combination for this action. For a custom base
+      # image, both arch and distro must be "none" and the platform is
+      # given as part of base_image itself. See the action's README.
+      # NOTE: pulling the arm64 variant of ubuntu:20.04 from Docker Hub
+      # has been reported failing for other users recently (deprecated
+      # manifest for that architecture/tag). If this step starts failing
+      # with an image-resolution error rather than a compile error, that's
+      # why - the documented workaround is this exact
+      # "--platform=linux/aarch64 ubuntu:20.04" form, but if Ubuntu 20.04
+      # arm64 truly stops resolving, the next fallback to try is
+      # ubuntu:22.04 (GLIBC 2.35) - note that does raise the minimum GLIBC
+      # your target device needs, so test that binary carefully before
+      # relying on it.
       - name: Set up QEMU & Run on ARM64 Container (Ubuntu 20.04 / GLIBC 2.31)
         uses: uraimo/run-on-arch-action@v3
         with:
@@ -33,6 +47,7 @@ jobs:
               libfreeimage-dev libfreetype6-dev libcurl4-openssl-dev libasound2-dev \
               libgl1-mesa-dev libgles2-mesa-dev libegl1-mesa-dev libglvnd-dev \
               libdrm-dev libgbm-dev libinput-dev libevdev-dev libopenal-dev libpulse-dev \
+              libwayland-dev \
               libboost-system-dev libboost-filesystem-dev libboost-date-time-dev \
               libboost-locale-dev libboost-thread-dev rapidjson-dev \
               libvlc-dev libvlccore-dev vlc-bin zip ca-certificates libwacom-dev python3 jq
@@ -78,19 +93,54 @@ jobs:
             export ES_SOURCE_DIR="/tmp/es-source"
             python3 "$WORKSPACE_ROOT/.github/scripts/patch_es_source.py"
 
-            echo "[+] Step 5: Configuring and compiling EmulationStation with \$ORIGIN RPATH..."
+            # --------------------------------------------------------------
+            # BUGFIX (root cause of the boot-loop-inducing wrong renderer):
+            # the top-level CMakeLists.txt auto-detects Desktop vs Embedded
+            # OpenGL by checking whether libMali.so exists at a handful of
+            # hardcoded paths. If it's not found, it silently falls back to
+            # Desktop OpenGL (-DUSE_OPENGL_21), which compiles
+            # Renderer_GL21.cpp - a renderer built around a real SDL window
+            # (SDL_GL_CreateContext(getSDLWindow())) that is fundamentally
+            # incompatible with this device's go2-based Renderer.cpp (which
+            # never creates a real SDL window at all). We were never
+            # installing the actual Mali GPU userspace driver the README
+            # requires, so that detection always failed and silently built
+            # the wrong renderer. Installing it here fixes the detection;
+            # passing -DGLES=ON on the cmake line below makes the choice
+            # explicit regardless, since that option is checked first and
+            # doesn't depend on any file-path guessing succeeding.
+            # --------------------------------------------------------------
+            echo "[+] Step 5: Installing Rockchip Mali (Mali-G31) GPU userspace driver..."
+            MALI_DRIVER_BASE_URL="https://github.com/southoz/EmulationStation-fcamod-ogs-retrooz/raw/master"
+            curl -L -o /tmp/libmali-rk-bifrost-g31-rxp0-wayland-gbm_1.7-2+deb10_arm64.deb \
+              "${MALI_DRIVER_BASE_URL}/libmali-rk-bifrost-g31-rxp0-wayland-gbm_1.7-2+deb10_arm64.deb"
+            curl -L -o /tmp/libmali-rk-dev_1.7-1+deb10_arm64.deb \
+              "${MALI_DRIVER_BASE_URL}/libmali-rk-dev_1.7-1+deb10_arm64.deb"
+            dpkg -i --force-all /tmp/libmali-rk-bifrost-g31-rxp0-wayland-gbm_1.7-2+deb10_arm64.deb
+            dpkg -i --force-all /tmp/libmali-rk-dev_1.7-1+deb10_arm64.deb
+            ldconfig
+
+            echo "[+] Step 6: Configuring and compiling EmulationStation with \$ORIGIN RPATH..."
             cd /tmp/es-source
             mkdir -p build && cd build
             cmake -DCMAKE_BUILD_TYPE=Release \
+                  -DGLES=ON \
                   -DCMAKE_EXE_LINKER_FLAGS="-Wl,-rpath,'\$ORIGIN'" ..
             make -j$(nproc)
 
-            echo "[+] Step 6: Verifying compiled binary architecture..."
-            # 🔧 FIXED: The binary is created at the source root, not inside build/
+            echo "[+] Step 7: Verifying compiled binary architecture..."
+            # BUGFIX: this project's root CMakeLists.txt forces
+            # EXECUTABLE_OUTPUT_PATH to CMAKE_CURRENT_SOURCE_DIR (the
+            # source root), NOT the out-of-source build/ directory we cd'd
+            # into above - so the final linked binary lands at
+            # /tmp/es-source/emulationstation regardless of where `make`
+            # was invoked from. The previous "build/emulationstation" path
+            # was wrong and would have failed here once the build got this
+            # far.
             ES_BIN_PATH="/tmp/es-source/emulationstation"
             python3 "$WORKSPACE_ROOT/.github/scripts/verify_es_binary.py" "$ES_BIN_PATH"
 
-            echo "[+] Step 7: Assembling release package with shared libraries..."
+            echo "[+] Step 8: Assembling release package with shared libraries..."
             PACKAGE_DIR="$WORKSPACE_ROOT/build_output/package"
             mkdir -p "$PACKAGE_DIR"
 
@@ -110,7 +160,7 @@ jobs:
 
             chmod +x "$PACKAGE_DIR"/*.sh 2>/dev/null || true
 
-            echo "[+] Step 8: Archiving build artifacts with symlink preservation (-y)..."
+            echo "[+] Step 9: Archiving build artifacts with symlink preservation (-y)..."
             cd "$PACKAGE_DIR"
             zip -r -y "$WORKSPACE_ROOT/build_output/emulationstation-fcamod-m9pro.zip" .
             echo "[✓] Build completed successfully!"
