@@ -88,6 +88,142 @@ def patch_renderer_sdl_window():
         print("[*] No file needed the getSDLWindow() fix (already present or not referenced).")
 
 
+# --------------------------------------------------------------------------
+# SIGSEGV/SIGABRT/SIGFPE/SIGILL crash handler with backtrace.
+#
+# Prints a real function-name backtrace (the binary is confirmed
+# not-stripped, so symbol names resolve) to /home/ark/es_crash.log before
+# the process dies, instead of a bare boot-loop with no diagnostic info.
+#
+# Installed via a static-init object rather than a call inserted inside
+# main()'s body: a global object's constructor runs before main() starts
+# (guaranteed for objects in the same translation unit as main), so this
+# just needs to be prepended to main.cpp - no regex-based "find the right
+# line inside main() to inject after" fragility required at all.
+#
+# backtrace() itself is warmed up once during that constructor (glibc can
+# lazily dlopen its unwinder on first call, which is not safe to do for
+# the first time from inside a signal handler) so the crash-time call is
+# already primed and safe.
+# --------------------------------------------------------------------------
+CRASH_HANDLER_CODE = r"""
+// === ES_CUSTOM_PATCH: crash handler ===
+#include <csignal>
+#include <cstdlib>
+#include <cstring>
+#include <execinfo.h>
+#include <fcntl.h>
+#include <unistd.h>
+
+namespace {
+    void es_crash_signal_handler(int sig) {
+        const char* path = "/home/ark/es_crash.log";
+        int fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0644);
+        if (fd >= 0) {
+            const char* header = "\n[CRASH] EmulationStation caught a fatal signal\n";
+            write(fd, header, strlen(header));
+
+            const char* sig_name =
+                (sig == SIGSEGV) ? "SIGSEGV (segmentation fault)\n" :
+                (sig == SIGABRT) ? "SIGABRT (abort)\n" :
+                (sig == SIGFPE)  ? "SIGFPE (floating point exception)\n" :
+                (sig == SIGILL)  ? "SIGILL (illegal instruction)\n" :
+                                    "unknown signal\n";
+            write(fd, sig_name, strlen(sig_name));
+
+            void* bt[64];
+            int n = backtrace(bt, 64);
+            backtrace_symbols_fd(bt, n, fd);
+
+            close(fd);
+        }
+        // Re-raise with the default handler so the OS still records/handles
+        // the crash normally (correct exit status, core dump if enabled).
+        signal(sig, SIG_DFL);
+        raise(sig);
+    }
+
+    struct EsCrashHandlerInstaller {
+        EsCrashHandlerInstaller() {
+            void* warmup[4];
+            backtrace(warmup, 4);
+
+            signal(SIGSEGV, es_crash_signal_handler);
+            signal(SIGABRT, es_crash_signal_handler);
+            signal(SIGFPE, es_crash_signal_handler);
+            signal(SIGILL, es_crash_signal_handler);
+        }
+    } es_crash_handler_installer_instance;
+}
+// === END ES_CUSTOM_PATCH: crash handler ===
+"""
+
+
+def find_main_entry(cpp_h_files, guis_dir):
+    """Find the file with the real int main() entry point, preferring the
+    same src/ subtree as the guis/ folder to avoid a vendored submodule's
+    unrelated main.cpp (only relevant if this fork has submodules)."""
+    def has_main(path):
+        try:
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                return re.search(r"int\s+main\s*\(", f.read()) is not None
+        except OSError:
+            return False
+
+    search_root = None
+    if guis_dir:
+        parts = guis_dir.replace(os.sep, "/").split("/")
+        if "src" in parts:
+            search_root = "/".join(parts[: parts.index("src") + 1])
+
+    if search_root:
+        for filepath in cpp_h_files:
+            fp = filepath.replace(os.sep, "/")
+            if fp.startswith(search_root + "/") and os.path.basename(fp) == "main.cpp" and has_main(filepath):
+                return filepath
+
+    for filepath in cpp_h_files:
+        if os.path.basename(filepath) == "main.cpp" and has_main(filepath):
+            return filepath
+
+    for filepath in cpp_h_files:
+        if filepath.endswith(".cpp") and has_main(filepath):
+            return filepath
+
+    return None
+
+
+def patch_crash_handler():
+    source_root = get_source_root()
+
+    all_cpp_h = []
+    for root, _, files in os.walk(source_root):
+        for file in files:
+            if file.endswith((".cpp", ".h")):
+                all_cpp_h.append(os.path.join(root, file))
+
+    guis_dir = os.path.join(source_root, "es-app", "src", "guis")
+    guis_dir = guis_dir if os.path.exists(guis_dir) else None
+
+    main_cpp = find_main_entry(all_cpp_h, guis_dir)
+    if not main_cpp:
+        print("[!] Could not locate main.cpp with a real int main() - skipping crash handler.")
+        return
+
+    with open(main_cpp, "r", encoding="utf-8", errors="ignore") as f:
+        content = f.read()
+
+    if "ES_CUSTOM_PATCH: crash handler" in content:
+        print(f"[i] Crash handler already present in {main_cpp}, skipping.")
+        return
+
+    content = CRASH_HANDLER_CODE.strip() + "\n\n" + content
+    with open(main_cpp, "w", encoding="utf-8") as f:
+        f.write(content)
+    print(f"[+] Injected SIGSEGV/SIGABRT/SIGFPE/SIGILL backtrace handler into: {main_cpp}")
+    print("    Crash backtraces will be appended to /home/ark/es_crash.log")
+
+
 def get_source_root():
     """Return the source directory from CLI arg, ENV, or default."""
     if len(sys.argv) > 1:
@@ -168,5 +304,5 @@ def patch_joystick_menu():
 
 if __name__ == "__main__":
     patch_renderer_sdl_window()
+    patch_crash_handler()
     patch_joystick_menu()
-    
