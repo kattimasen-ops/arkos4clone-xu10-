@@ -4,21 +4,31 @@ import sys
 import subprocess
 import glob
 
-# Allow passing binary path as first CLI argument or via ENV
-if len(sys.argv) > 1:
-    binary_path = sys.argv[1]
-else:
-    binary_path = os.environ.get("ES_BIN_PATH")
-    if not binary_path:
-        # Fallback: search /tmp/es-source
-        source_root = "/tmp/es-source"
-        binary_path = None
+def find_binary():
+    """Search common locations for the emulationstation binary."""
+    candidates = [
+        "/tmp/es-source/emulationstation",
+        "/tmp/es-source/build/emulationstation",
+        "/tmp/es-source/es-app/emulationstation",
+    ]
+    for path in candidates:
+        if os.path.isfile(path) and not os.path.islink(path):
+            return path
+
+    # Fallback: recursive search in /tmp/es-source
+    source_root = "/tmp/es-source"
+    if os.path.isdir(source_root):
         for p in glob.glob(os.path.join(source_root, "**", "*"), recursive=True):
             if os.path.basename(p) == "emulationstation" and os.path.isfile(p) and not os.path.islink(p):
-                binary_path = p
-                break
+                return p
+    return None
 
-if not binary_path or not os.path.isfile(binary_path):
+if len(sys.argv) > 1 and os.path.isfile(sys.argv[1]):
+    binary_path = sys.argv[1]
+else:
+    binary_path = find_binary()
+
+if not binary_path:
     print("[ERROR] Could not locate compiled emulationstation binary!")
     sys.exit(1)
 
